@@ -2,6 +2,7 @@
 // parsing/formatting, and lenient frontmatter coercion (yaml.v3 decodes scalars into typed structs
 // loosely: an integer into a string field becomes its text, null becomes the zero value).
 import { readdirSync, statSync } from "node:fs";
+import { basename, dirname } from "node:path";
 import { GO_ZERO_TIME } from "../../models/common.ts";
 
 // --- Go time ----------------------------------------------------------------------------------
@@ -245,4 +246,32 @@ export function readDirSorted(dir: string): import("node:fs").Dirent[] {
     if (isNotFound(e) || (e as NodeJS.ErrnoException).code === "ENOTDIR") return [];
     throw e;
   }
+}
+
+/**
+ * readdir, twice when the first listing lacks a file the previous scan had in this directory. A
+ * rename (an editor, an external tool) can be missed by a listing that runs through the directory
+ * while it happens: the old name is gone and the new one was added where the listing had already
+ * passed. The second listing finds it; a file that is really deleted is absent from both, so it is
+ * dropped at once. The union keeps a name either listing saw; one deleted in between fails to read
+ * and is kept for one more scan by readOrKeep. `previous` is keyed by full path.
+ */
+export function readDirStable(
+  dir: string,
+  previous: ReadonlyMap<string, unknown> | undefined,
+): import("node:fs").Dirent[] {
+  const first = readDirSorted(dir);
+  if (!previous) return first;
+  const names = new Set(first.map((e) => e.name));
+  let vanished = false;
+  for (const path of previous.keys()) {
+    if (dirname(path) === dir && !names.has(basename(path))) {
+      vanished = true;
+      break;
+    }
+  }
+  if (!vanished) return first;
+  const extra = readDirSorted(dir).filter((e) => !names.has(e.name));
+  if (extra.length === 0) return first;
+  return [...first, ...extra].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }

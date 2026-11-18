@@ -38,16 +38,36 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
+          // Vite's dynamic-import helper and the CJS interop helpers are imported by the entry. Left
+          // unassigned they land in the first vendor chunk that uses them (mermaid-vendor, 2.6 MB),
+          // which then preloads on every page. Keep them in their own tiny chunk.
+          if (id.includes("vite/preload-helper") || id.includes("commonjsHelpers")) {
+            return "runtime-helpers";
+          }
+
+          // lodash-es is used by both graph and mermaid; a chunk of its own avoids a graph<->mermaid cycle.
+          if (id.includes("node_modules/lodash-es")) return "lodash-vendor";
+
+          // The force graph (docs mini graph, graph page) and d3 live apart from mermaid, so a docs
+          // page does not download mermaid's 740 KB (gz) unless a diagram is shown.
+          if (
+            id.includes("node_modules/react-force-graph-2d") ||
+            id.includes("node_modules/force-graph") ||
+            id.includes("node_modules/d3") ||
+            id.includes("node_modules/kapsule") ||
+            id.includes("node_modules/accessor-fn") ||
+            id.includes("node_modules/canvas-color-tracker")
+          ) {
+            return "graph-vendor";
+          }
+
           // Mermaid + its deps — kept together for embedded file server compatibility
           if (
             id.includes("node_modules/mermaid") ||
             id.includes("node_modules/dagre") ||
             id.includes("node_modules/@mermaid-js") ||
-            id.includes("node_modules/d3") ||
             id.includes("node_modules/elkjs") ||
-            id.includes("node_modules/cytoscape") ||
-            id.includes("node_modules/react-force-graph-2d") ||
-            id.includes("node_modules/force-graph")
+            id.includes("node_modules/cytoscape")
           ) {
             return "mermaid-vendor";
           }

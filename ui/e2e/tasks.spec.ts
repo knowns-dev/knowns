@@ -73,7 +73,15 @@ test.describe("Tasks Page", () => {
 
 		await test.step("Selecting a row offers a bulk archive", async () => {
 			await page.getByRole("checkbox", { name: /Select row/ }).first().check();
-			await page.getByRole("button", { name: /Archive 1 selected/ }).click();
+			// The bar must stay mounted while the list settles after the search was cleared (the debounced
+			// search restarts the list a moment later and must not read as "the selected row is gone").
+			const bar = page.getByRole("button", { name: /Archive 1 selected/ });
+			await expect(bar).toBeVisible();
+			await page.waitForTimeout(800);
+			await expect(bar).toBeVisible();
+			// Rows may reorder as late task events land; the selection follows the task, not the position.
+			await expect(page.getByRole("checkbox", { name: /Select row/, checked: true })).toHaveCount(1);
+			await bar.click();
 			await expect(page.getByRole("heading", { name: "Archive completed Tasks" })).toBeVisible();
 		});
 	});

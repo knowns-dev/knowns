@@ -1,98 +1,101 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, ClipboardList } from "lucide-react";
 import type { Task } from "@/ui/models/task";
-import { ScrollArea } from "@/ui/components/ui/ScrollArea";
 import { Combobox } from "@/ui/components/ui/knowns/combobox";
+import { Skeleton } from "@/ui/components/ui/knowns/skeleton";
 import { Button } from "@/ui/components/ui/button";
 import { StatusBadge, PriorityBadge, LabelList } from "@/ui/components/molecules";
+import { PageError } from "@/ui/components/templates/PageShell";
+import { ListTail } from "@/ui/components/molecules/ListTail";
 import { useConfig } from "@/ui/contexts/ConfigContext";
+import { useTaskColumns } from "@/ui/hooks/useTaskColumns";
+import { useTaskCounts } from "@/ui/hooks/useTaskCounts";
 import { getStatusLabel, buildStatusOptions } from "@/ui/utils/colors";
 import { TaskLifecycleBadge } from "@/ui/components/molecules/TaskLifecycleBadge";
-import { assigneeLabel, groupTasksByAssignee } from "./assignees";
+import type { TaskFilters } from "@/ui/api/client";
+import { assigneeLabel, UNASSIGNED } from "./assignees";
 
 interface TaskGroupedViewProps {
-	tasks: Task[];
+	/** Server-side filters from the page (assignee, lifecycle). */
+	filters: TaskFilters;
+	onTotal?: (total: number | null) => void;
 	onTaskClick: (task: Task) => void;
 	onNewTask: () => void;
 }
 
-export function TaskGroupedView({ tasks, onTaskClick, onNewTask }: TaskGroupedViewProps) {
+const PAGE = 30;
+
+function TaskRowSkeleton() {
+	return (
+		<div className="flex flex-col gap-2 px-2 py-2.5">
+			<Skeleton className="h-4 w-2/3" />
+			<Skeleton className="h-3 w-1/3" />
+		</div>
+	);
+}
+
+export function TaskGroupedView({ filters, onTotal, onTaskClick, onNewTask }: TaskGroupedViewProps) {
 	const { config } = useConfig();
 	const [groupBy, setGroupBy] = useState<"status" | "assignee">("status");
 	const [statusFilter, setStatusFilter] = useState<string>("all");
 	const [parentFilter, setParentFilter] = useState<string>("all");
 	const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
 
-	// Get statuses from config
-	const availableStatuses = useMemo(() => {
-		return (config?.statuses as string[]) || ["todo", "in-progress", "in-review", "done", "blocked"];
-	}, [config?.statuses]);
+	const availableStatuses = useMemo(
+		() => (config?.statuses as string[]) || ["todo", "in-progress", "in-review", "done", "blocked"],
+		[config?.statuses],
+	);
+	const statusOptions = useMemo(() => buildStatusOptions(availableStatuses), [availableStatuses]);
 
-	// Build status options for filter dropdown
-	const statusOptions = useMemo(() => {
-		return buildStatusOptions(availableStatuses);
-	}, [availableStatuses]);
+	// Status and parent are server-side filters now; groups are server-paged lists like Kanban columns.
+	const baseFilters = useMemo<TaskFilters>(
+		() => ({ ...filters, ...(parentFilter === "root" ? { parent: "none" } : parentFilter !== "all" ? { parent: parentFilter } : {}) }),
+		[filters, parentFilter],
+	);
+	// Counts ignore the status filter (the server does), so group headers stay honest.
+	const { counts } = useTaskCounts(baseFilters);
 
-	// Get list of parent tasks (tasks that have subtasks)
-	const parentTasks = tasks.filter((t) => t.subtasks && t.subtasks.length > 0);
-
-	// Filter tasks by status and parent
-	let filteredTasks = statusFilter === "all" ? tasks : tasks.filter((t) => t.status === statusFilter);
-
-	// Apply parent filter
-	if (parentFilter === "root") {
-		filteredTasks = filteredTasks.filter((t) => !t.parent);
-	} else if (parentFilter !== "all") {
-		filteredTasks = filteredTasks.filter((t) => t.parent === parentFilter);
-	}
-
-	// Group by status - dynamically from config
-	const groupedTasks: Record<string, Task[]> = useMemo(() => {
-		const groups: Record<string, Task[]> = {};
-		// Initialize all statuses from config
-		for (const status of availableStatuses) {
-			groups[status] = [];
+	const groups = useMemo(() => {
+		if (groupBy === "status") {
+			return availableStatuses
+				.filter((s) => statusFilter === "all" || s === statusFilter)
+				.map((s) => ({ key: s, label: getStatusLabel(s), filters: { ...baseFilters, status: s } as TaskFilters, count: counts?.byStatus[s] }));
 		}
-		// Group filtered tasks
-		for (const task of filteredTasks) {
-			// Tasks with a status not in config get their own group
-			(groups[task.status] ??= []).push(task);
+		// By person: the people come from the counts (most tasks first, Unassigned last).
+		const byAssignee = counts?.byAssignee ?? {};
+		const people = Object.entries(byAssignee)
+			.filter(([a]) => a !== "")
+			.sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))
+			.map(([a, n]) => ({ key: a, label: assigneeLabel(a), filters: { ...baseFilters, assignee: a, ...(statusFilter !== "all" ? { status: statusFilter } : {}) } as TaskFilters, count: n }));
+		if ((byAssignee[""] ?? 0) > 0) {
+			people.push({ key: UNASSIGNED, label: assigneeLabel(UNASSIGNED), filters: { ...baseFilters, unassigned: true, ...(statusFilter !== "all" ? { status: statusFilter } : {}) } as TaskFilters, count: byAssignee[""] as number });
 		}
-		// Sort by priority within each group
-		const priorityOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
-		for (const statusTasks of Object.values(groups)) {
-			statusTasks.sort((a, b) => {
-				const diff = (priorityOrder[a.priority] ?? 2) - (priorityOrder[b.priority] ?? 2);
-				if (diff !== 0) return diff;
-				return String(a.id ?? "").localeCompare(String(b.id ?? ""), undefined, { numeric: true });
-			});
-		}
-		return groups;
-	}, [availableStatuses, filteredTasks]);
+		return people;
+	}, [groupBy, availableStatuses, statusFilter, baseFilters, counts]);
 
-	// By person, each keeping the status-then-priority order of the status groups.
-	const sections = useMemo(() => {
-		if (groupBy === "assignee") {
-			const prioritized = Object.values(groupedTasks).flat();
-			return groupTasksByAssignee(prioritized).map((group) => ({
-				key: group.key,
-				label: assigneeLabel(group.key),
-				tasks: group.tasks,
-			}));
-		}
-		return Object.entries(groupedTasks).map(([status, statusTasks]) => ({
-			key: status,
-			label: getStatusLabel(status),
-			tasks: statusTasks,
-		}));
-	}, [groupBy, groupedTasks]);
+	const keys = useMemo(() => groups.map((g) => g.key), [groups]);
+	const filtersByKey = useMemo(() => new Map(groups.map((g) => [g.key, g.filters])), [groups]);
+	const filtersFor = useCallback((key: string): TaskFilters => filtersByKey.get(key) ?? baseFilters, [filtersByKey, baseFilters]);
+	const feeds = useTaskColumns({ keys, filtersFor, sort: "board", pageSize: PAGE, enabled: groupBy === "status" || counts !== null });
+
+	const total = useMemo(() => {
+		if (!counts) return null;
+		return statusFilter === "all" ? counts.total : (counts.byStatus[statusFilter] ?? 0);
+	}, [counts, statusFilter]);
+	const answered = keys.every((k) => feeds.column(k).status === "ready");
+	const emptyTotal = feeds.all.length > 0 ? feeds.all.length : answered ? total : null;
+	const failed = keys.some((k) => feeds.column(k).status === "error" && feeds.column(k).items.length === 0);
+	useEffect(() => onTotal?.(failed ? null : emptyTotal), [emptyTotal, failed, onTotal]);
+
+	// Parents to filter by: those among the Tasks loaded so far that have subtasks.
+	const parentTasks = feeds.all.filter((t) => t.subtasks && t.subtasks.length > 0);
+	const byId = useMemo(() => new Map(feeds.all.map((t) => [t.id, t])), [feeds.all]);
 
 	return (
 		<div className="h-full flex flex-col">
 			{/* Toolbar */}
 			<div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 sm:gap-4 mb-6">
 				<div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-					{/* Group By */}
 					<Combobox
 						aria-label="Group by"
 						value={groupBy}
@@ -103,8 +106,6 @@ export function TaskGroupedView({ tasks, onTaskClick, onNewTask }: TaskGroupedVi
 						]}
 						className="w-[150px] sm:w-[170px] text-sm"
 					/>
-
-					{/* Status Filter */}
 					<Combobox
 						aria-label="Status"
 						value={statusFilter}
@@ -112,8 +113,6 @@ export function TaskGroupedView({ tasks, onTaskClick, onNewTask }: TaskGroupedVi
 						options={[{ value: "all", label: "All Status" }, ...statusOptions]}
 						className="w-[100px] sm:w-[130px] text-sm"
 					/>
-
-					{/* Parent Filter */}
 					<Combobox
 						aria-label="Parent"
 						searchable
@@ -122,69 +121,65 @@ export function TaskGroupedView({ tasks, onTaskClick, onNewTask }: TaskGroupedVi
 						options={[
 							{ value: "all", label: "All Tasks" },
 							{ value: "root", label: "Root Tasks Only" },
+							...(parentFilter !== "all" && parentFilter !== "root" && !parentTasks.some((p) => p.id === parentFilter)
+								? [{ value: parentFilter, label: `Subtasks of #${parentFilter}`, supportingText: `#${parentFilter}` }]
+								: []),
 							...parentTasks.map((parent) => ({ value: parent.id, label: `Subtasks of ${parent.title}`, supportingText: `#${parent.id}` })),
 						]}
 						className="w-[130px] sm:w-[180px] text-sm"
 					/>
-
 					<span className="text-muted-foreground text-xs">
-						{filteredTasks.length} {filteredTasks.length === 1 ? "task" : "tasks"}
+						{total ?? "..."} {total === 1 ? "task" : "tasks"}
 					</span>
 				</div>
-
 				<Button onClick={onNewTask} size="sm" className="shrink-0 w-full sm:w-auto gap-1.5">
 					<Plus className="h-4 w-4" />
 					New Task
 				</Button>
 			</div>
 
-			{/* Task Groups */}
-			<ScrollArea className="flex-1">
+			{/* Task Groups: the container scrolls, each group pages as its end comes near */}
+			{keys.some((k) => feeds.column(k).status === "error" && feeds.column(k).items.length === 0) && (
+				<PageError
+					description={keys.map((k) => feeds.column(k).error).find(Boolean) ?? undefined}
+					onRetry={() => keys.forEach((k) => feeds.retry(k))}
+					className="flex-1"
+				/>
+			)}
+			<div className="flex-1 min-h-0 overflow-y-auto">
 				<div className="space-y-8 pr-4">
-					{sections.map(({ key, label, tasks: statusTasks }) => {
-						if (statusTasks.length === 0) return null;
-
+					{groups.map((group) => {
+						const col = feeds.column(group.key);
+						const n = group.count ?? col.total;
+						if (col.status === "ready" && col.items.length === 0 && n === 0) return null;
 						return (
-							<div key={key}>
+							<div key={group.key}>
 								<h2 className="text-lg font-semibold mb-1">
-									{label}
-									<span className="text-sm font-normal text-muted-foreground ml-2">{statusTasks.length}</span>
+									{group.label}
+									<span className="text-sm font-normal text-muted-foreground ml-2">{n}</span>
 								</h2>
 								<div className="border-t border-border/40 pt-2">
-									{statusTasks.map((task) => {
+									{col.items.map((task) => {
 										const isExpanded = expandedTasks.has(task.id);
-										const parentTask = task.parent ? tasks.find((t) => t.id === task.parent) : null;
-
+										const parentTask = task.parent ? byId.get(task.parent) : null;
+										const text = task.description ?? task.descriptionPreview;
 										return (
-											<div
-												key={task.id}
-												className="py-2.5 px-2 -mx-2 rounded-md transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:bg-muted/50"
-											>
+											<div key={task.id} className="py-2.5 px-2 -mx-2 rounded-md transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:bg-muted/50">
 												<div className="flex items-start gap-3">
-													{/* Task Info */}
 													<div className="flex-1 min-w-0">
 														<div className="flex items-center gap-2 mb-1 flex-wrap">
-															<button
-																type="button"
-																onClick={() => onTaskClick(task)}
-																className="font-medium text-sm hover:underline text-left"
-															>
+															<button type="button" onClick={() => onTaskClick(task)} className="font-medium text-sm hover:underline text-left">
 																{task.title}
 															</button>
-														<span className="text-xs text-muted-foreground font-mono">
-															#{task.id}
-														</span>
-														<TaskLifecycleBadge state={task.lifecycleState} />
+															<span className="text-xs text-muted-foreground font-mono">#{task.id}</span>
+															<TaskLifecycleBadge state={task.lifecycleState} />
 														</div>
-
 														<div className="flex items-center gap-2 flex-wrap">
 															<StatusBadge status={task.status} />
 															<PriorityBadge priority={task.priority} />
-
-															{/* Parent/Subtask badges */}
-															{parentTask && (
+															{task.parent && (
 																<span className="text-xs px-1.5 py-0.5 rounded bg-purple-100/60 text-purple-700 dark:bg-purple-900/20 dark:text-purple-400">
-																	↑ #{parentTask.id}
+																	↑ #{parentTask?.id ?? task.parent}
 																</span>
 															)}
 															{task.subtasks && task.subtasks.length > 0 && (
@@ -192,34 +187,25 @@ export function TaskGroupedView({ tasks, onTaskClick, onNewTask }: TaskGroupedVi
 																	{task.subtasks.length} subtask{task.subtasks.length > 1 ? "s" : ""}
 																</span>
 															)}
-
-															{/* Acceptance Criteria Progress */}
 															{(task.acceptanceCriteria ?? []).length > 0 && (
 																<span className="flex items-center gap-1 text-xs text-muted-foreground">
 																	<ClipboardList className="w-3 h-3" />
-																	{(task.acceptanceCriteria ?? []).filter((ac) => ac.completed).length}/
-																	{(task.acceptanceCriteria ?? []).length}
+																	{(task.acceptanceCriteria ?? []).filter((ac) => ac.completed).length}/{(task.acceptanceCriteria ?? []).length}
 																</span>
 															)}
 														</div>
-
-														{task.description && (
+														{text && (
 															<div className="text-sm text-muted-foreground mt-1.5">
-																<p className={isExpanded ? "" : "line-clamp-2"}>
-																	{task.description}
-																</p>
-																{task.description.length > 100 && (
+																<p className={isExpanded ? "" : "line-clamp-2"}>{text}</p>
+																{text.length > 100 && (
 																	<button
 																		type="button"
 																		onClick={(e) => {
 																			e.stopPropagation();
-																			const newExpanded = new Set(expandedTasks);
-																			if (isExpanded) {
-																				newExpanded.delete(task.id);
-																			} else {
-																				newExpanded.add(task.id);
-																			}
-																			setExpandedTasks(newExpanded);
+																			const next = new Set(expandedTasks);
+																			if (isExpanded) next.delete(task.id);
+																			else next.add(task.id);
+																			setExpandedTasks(next);
 																		}}
 																		className="text-xs text-muted-foreground hover:text-foreground mt-1 font-medium"
 																	>
@@ -228,35 +214,38 @@ export function TaskGroupedView({ tasks, onTaskClick, onNewTask }: TaskGroupedVi
 																)}
 															</div>
 														)}
-
 														{(task.labels ?? []).length > 0 && (
 															<div className="mt-1.5">
 																<LabelList labels={task.labels} maxVisible={3} />
 															</div>
 														)}
 													</div>
-
-													{/* Assignee */}
-													{task.assignee && (
-														<span className="text-xs text-muted-foreground font-mono shrink-0 mt-1">
-															{task.assignee}
-														</span>
-													)}
+													{task.assignee && <span className="text-xs text-muted-foreground font-mono shrink-0 mt-1">{task.assignee}</span>}
 												</div>
 											</div>
 										);
 									})}
+									<ListTail
+										hasMore={col.hasMore}
+										busy={col.status === "loadingMore" || col.status === "loading"}
+										error={col.error}
+										count={col.items.length}
+										onMore={() => feeds.loadMore(group.key)}
+										onRetry={() => feeds.retry(group.key)}
+										skeleton={<TaskRowSkeleton />}
+										skeletonCount={col.items.length === 0 ? 3 : 2}
+									/>
 								</div>
 							</div>
 						);
 					})}
-					{filteredTasks.length === 0 && (
+					{total === 0 && (
 						<div className="text-center py-12">
 							<p className="text-sm text-muted-foreground">No tasks found</p>
 						</div>
 					)}
 				</div>
-			</ScrollArea>
+			</div>
 		</div>
 	);
 }

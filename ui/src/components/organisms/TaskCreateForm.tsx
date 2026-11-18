@@ -1,8 +1,9 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import type { Task, TaskPriority, TaskStatus } from "@models/task";
+import type { Task, TaskPriority, TaskStatus } from "@/ui/models/task";
 import { useCurrentUser } from "../../contexts/UserContext";
 import { useConfig } from "../../contexts/ConfigContext";
-import { createTask } from "../../api/client";
+import { api, createTask } from "../../api/client";
+import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { toast } from "../ui/sonner";
 import AssigneeDropdown from "./AssigneeDropdown";
 import { Dialog } from "@/ui/components/ui/knowns/dialog";
@@ -16,7 +17,6 @@ import { buildStatusOptions } from "../../utils/colors";
 
 interface TaskCreateFormProps {
 	isOpen: boolean;
-	allTasks: Task[];
 	onClose: () => void;
 	onCreated: () => void;
 }
@@ -50,7 +50,7 @@ function defaultLabelsOf(value: string[] | undefined): string[] {
 	return [...new Set((value ?? []).map((l) => l.trim()).filter(Boolean))];
 }
 
-export default function TaskCreateForm({ isOpen, allTasks, onClose, onCreated }: TaskCreateFormProps) {
+export default function TaskCreateForm({ isOpen, onClose, onCreated }: TaskCreateFormProps) {
 	const { currentUser } = useCurrentUser();
 	const { config } = useConfig();
 	const uid = useId();
@@ -123,6 +123,8 @@ export default function TaskCreateForm({ isOpen, allTasks, onClose, onCreated }:
 		setLabelDraft("");
 		setParentId("");
 		setPrefix("");
+		setParentQuery("");
+		setChosenParent(null);
 		setCriteria([]);
 		setShowAdvanced(false);
 		setErrors({});
@@ -137,19 +139,32 @@ export default function TaskCreateForm({ isOpen, allTasks, onClose, onCreated }:
 		pendingFocus.current = null;
 	}, [criteria]);
 
-	const parentOptions = useMemo(
-		() => [
-			{ value: "", label: "None" },
-			...allTasks.map((t) => ({ value: t.id, label: t.title, supportingText: `#${t.id}` })),
-		],
-		[allTasks],
-	);
+	// Parent candidates come from the server, never from a full list: the 100 most recently updated
+	// tasks to start with, and a server search (id, title, labels) as the person types.
+	const [parentQuery, setParentQuery] = useState("");
+	const parentTerm = useDebouncedValue(parentQuery.trim(), 250);
+	const [candidates, setCandidates] = useState<Task[]>([]);
+	const [chosenParent, setChosenParent] = useState<Task | null>(null);
+	useEffect(() => {
+		if (!isOpen) return;
+		const ctl = new AbortController();
+		api
+			.getTasksPage({ limit: parentTerm ? 50 : 100, sort: "updated-desc", ...(parentTerm ? { query: parentTerm } : {}), signal: ctl.signal })
+			.then((page) => setCandidates(page.tasks))
+			.catch(() => {});
+		return () => ctl.abort();
+	}, [isOpen, parentTerm]);
+
+	const parentOptions = useMemo(() => {
+		const rows = candidates.some((t) => t.id === chosenParent?.id) || !chosenParent ? candidates : [chosenParent, ...candidates];
+		return [{ value: "", label: "None" }, ...rows.map((t) => ({ value: t.id, label: t.title, supportingText: `#${t.id}` }))];
+	}, [candidates, chosenParent]);
 
 	const knownLabels = useMemo(() => {
 		const all = new Set<string>();
-		for (const t of allTasks) for (const l of t.labels ?? []) all.add(l);
+		for (const t of candidates) for (const l of t.labels ?? []) all.add(l);
 		return [...all].filter((l) => !labels.includes(l)).sort();
-	}, [allTasks, labels]);
+	}, [candidates, labels]);
 
 	const clearError = (name: FieldName) => setErrors((prev) => (prev[name] ? { ...prev, [name]: undefined } : prev));
 
@@ -365,17 +380,31 @@ export default function TaskCreateForm({ isOpen, allTasks, onClose, onCreated }:
 						<AssigneeDropdown value={assignee} onChange={setAssignee} showGrabButton={false} currentUser={currentUser} />
 					</div>
 					<Field label="Parent task" id={ids.parent} optional>
-						<Combobox
-							id={ids.parent}
-							options={parentOptions}
-							value={parentId}
-							onValueChange={setParentId}
-							searchable
-							presentation="auto"
-							aria-label="Parent task"
-							emptyText="No task found."
-							disabled={saving}
-						/>
+						<div className="flex flex-col gap-1.5">
+							<Input
+								size="sm"
+								type="search"
+								placeholder="Search all tasks by id or title"
+								aria-label="Search parent tasks"
+								value={parentQuery}
+								onChange={(e) => setParentQuery(e.target.value)}
+								disabled={saving}
+							/>
+							<Combobox
+								id={ids.parent}
+								options={parentOptions}
+								value={parentId}
+								onValueChange={(v) => {
+									setParentId(v);
+									setChosenParent(candidates.find((t) => t.id === v) ?? null);
+								}}
+								searchable
+								presentation="auto"
+								aria-label="Parent task"
+								emptyText="No task found."
+								disabled={saving}
+							/>
+						</div>
 					</Field>
 				</div>
 

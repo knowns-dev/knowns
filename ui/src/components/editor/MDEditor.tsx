@@ -1,13 +1,15 @@
-import { forwardRef, useImperativeHandle, useCallback, useMemo } from "react";
+import { forwardRef, useImperativeHandle, useCallback, useEffect, useMemo, useState } from "react";
 import MdEditor from "react-markdown-editor-lite";
 import "react-markdown-editor-lite/lib/index.css";
 import { marked } from "marked";
-import hljs from "highlight.js";
+import { getHljs, loadHljs } from "../../lib/hljs";
 import { useTheme } from "../../App";
 
 // Configure marked to use highlight.js
 marked.setOptions({
 	highlight: (code: string, lang: string) => {
+		const hljs = getHljs();
+		if (!hljs) return code; // plain until highlight.js has loaded (the editor re-renders then)
 		if (lang && hljs.getLanguage(lang)) {
 			try {
 				return hljs.highlight(code, { language: lang }).value;
@@ -54,11 +56,20 @@ const MDEditorComponent = forwardRef<MDEditorRef, MDEditorComponentProps>(
 		ref,
 	) => {
 		const { isDark } = useTheme();
+		const [hljsReady, setHljsReady] = useState(() => getHljs() !== null);
+		useEffect(() => {
+			if (hljsReady) return;
+			let live = true;
+			loadHljs().then(() => live && setHljsReady(true)).catch(() => {});
+			return () => {
+				live = false;
+			};
+		}, [hljsReady]);
 
 		// Markdown renderer using marked
 		const renderHTML = useCallback((text: string) => {
 			return marked.parse(text, { async: false }) as string;
-		}, []);
+		}, [hljsReady]); // biome-ignore lint/correctness/useExhaustiveDependencies: a new renderer re-renders the preview once colours exist
 
 		const handleEditorChange = useCallback(
 			({ text }: { text: string }) => {

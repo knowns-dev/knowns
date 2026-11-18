@@ -29,7 +29,6 @@ import { formatTracked, priorityOptions, statusTone } from "./types";
 
 interface TaskDetailSheetProps {
 	task: Task | null;
-	allTasks: Task[];
 	onClose: () => void;
 	onUpdate: (task: Task) => void;
 	onDelete?: (taskId: string) => void;
@@ -48,7 +47,6 @@ interface LifecyclePreviewState {
 
 export function TaskDetailSheet({
 	task,
-	allTasks,
 	onClose,
 	onUpdate,
 	onDelete,
@@ -56,6 +54,26 @@ export function TaskDetailSheet({
 	onNavigateToTask,
 }: TaskDetailSheetProps) {
 	const { currentUser } = useCurrentUser();
+	// The sheet needs exactly two things beyond its own task: the parent (a title) and the subtasks.
+	// Both come from the server on demand, so no page has to hold the whole list.
+	const [related, setRelated] = useState<Task[]>([]);
+	const relatedId = task?.id;
+	const relatedParent = task?.parent;
+	const relatedHasSubtasks = (task?.subtasks?.length ?? 0) > 0;
+	useEffect(() => {
+		setRelated([]);
+		if (!relatedId) return;
+		const ctl = new AbortController();
+		const jobs: Promise<Task[]>[] = [];
+		if (relatedParent) jobs.push(api.getTask(relatedParent, { signal: ctl.signal }).then((t) => [t]));
+		if (relatedHasSubtasks) {
+			jobs.push(api.getTasksPage({ parent: relatedId, lifecycle: "all", limit: 200, sort: "id", signal: ctl.signal }).then((p) => p.tasks));
+		}
+		Promise.all(jobs)
+			.then((groups) => setRelated(groups.flat()))
+			.catch(() => {});
+		return () => ctl.abort();
+	}, [relatedId, relatedParent, relatedHasSubtasks]);
 	const { preferences, toggleTaskDetailLayout } = useUIPreferences();
 	const [saving, setSaving] = useState(false);
 	const isMaximized = preferences.taskDetailLayout === "maximized";
@@ -268,7 +286,7 @@ export function TaskDetailSheet({
 	const archived = view.lifecycleState === "archived";
 	const canHardDelete = config.capabilities?.taskHardDelete === true;
 	const busy = saving || lifecycleLoading;
-	const parentTask = view.parent ? allTasks.find((t) => t.id === view.parent) : undefined;
+	const parentTask = view.parent ? related.find((t) => t.id === view.parent) : undefined;
 	const sessions = (view.timeEntries ?? []).filter((e) => e.endedAt).length;
 
 	const breadcrumbs: PageHeaderCrumb[] = [
@@ -429,7 +447,7 @@ export function TaskDetailSheet({
 										aria-label="Properties"
 										className="min-w-0 border-t border-[color-mix(in_srgb,var(--foreground)_9%,transparent)] pt-6 @[760px]/detail:self-start @[760px]/detail:border-t-0 @[760px]/detail:border-l @[760px]/detail:pt-0 @[760px]/detail:pl-6"
 									>
-										<TaskSidebar task={view} allTasks={allTasks} currentUser={currentUser} onSave={handleSave} onNavigateToTask={openTask} saving={busy} />
+										<TaskSidebar task={view} allTasks={related} currentUser={currentUser} onSave={handleSave} onNavigateToTask={openTask} saving={busy} />
 									</aside>
 								</div>
 							</div>

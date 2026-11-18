@@ -1,16 +1,20 @@
 import { useRouterState } from "@tanstack/react-router";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { Task } from "@/ui/models/task";
-import { getDocs, getTasksBySpec } from "../api/client";
+import { getDoc, getDocsPage, getTasksBySpec } from "../api/client";
 import { navigateTo } from "../lib/navigation";
 import { useSSEEvent } from "./SSEContext";
 import { normalizePath, toDisplayPath, isSpec, getSpecStatusOrder, type Doc } from "../lib/utils";
 
 interface DocsContextType {
 	docs: Doc[];
+	/** More pages of the list are still arriving. */
+	walking: boolean;
 	loading: boolean;
 	error: string | null;
 	selectedDoc: Doc | null;
+	/** The list carries no bodies; true from selecting a doc until its body arrives. */
+	bodyLoading: boolean;
 	setSelectedDoc: (doc: Doc | null) => void;
 	selectDocByPath: (path: string) => void;
 	isEditing: boolean;
@@ -27,14 +31,34 @@ interface DocsContextType {
 	navigateToFolder: (folder: string | null) => void;
 }
 
+function docVersionKey(doc: Doc): string {
+	return `${doc.canonicalHash ?? ""}|${doc.metadata?.updatedAt ?? ""}`;
+}
+
+/** A summary doc gets its body back from the cache when that body is still the current version. */
+function withCachedBody(doc: Doc, cache: Map<string, { key: string; content: string }>): Doc {
+	if (typeof doc.content === "string") return doc;
+	const hit = cache.get(doc.path);
+	return hit && hit.key === docVersionKey(doc) ? { ...doc, content: hit.content } : doc;
+}
+
 const DocsContext = createContext<DocsContextType | null>(null);
+
+const DOC_PAGE = 200;
 
 export function DocsProvider({ children }: { children: React.ReactNode }) {
 	const location = useRouterState({ select: (state) => state.location });
 	const [docs, setDocs] = useState<Doc[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
-	const [selectedDoc, setSelectedDocState] = useState<Doc | null>(null);
+	// The list is metadata only (?summary=true), so `content` is undefined until the body is fetched.
+	const [selectedRaw, setSelectedDocState] = useState<Doc | null>(null);
+	const bodyCache = useRef(new Map<string, { key: string; content: string }>());
+	const selectedDoc = useMemo<Doc | null>(
+		() => (selectedRaw ? { ...selectedRaw, content: selectedRaw.content ?? "" } : null),
+		[selectedRaw],
+	);
+	const bodyLoading = selectedRaw !== null && selectedRaw.content === undefined;
 	const [isEditing, setIsEditing] = useState(false);
 	const [editedContent, setEditedContent] = useState("");
 	const [linkedTasks, setLinkedTasks] = useState<Task[]>([]);
@@ -56,6 +80,48 @@ export function DocsProvider({ children }: { children: React.ReactNode }) {
 		selectedDocRef.current = selectedDoc;
 	}, [selectedDoc]);
 
+	// Fetch the body of the opened doc when the list did not carry it (or it changed since cached).
+	const needsBodyPath = selectedRaw && selectedRaw.content === undefined ? selectedRaw.path : null;
+	const needsBodyKey = selectedRaw ? docVersionKey(selectedRaw) : "";
+	useEffect(() => {
+		if (!needsBodyPath) return;
+		let cancelled = false;
+		getDoc(needsBodyPath)
+			.then((got) => {
+				if (cancelled || !got) return;
+				const full = got as unknown as Doc; // the server's nested shape, like the list
+				bodyCache.current.set(needsBodyPath, { key: docVersionKey(full), content: full.content ?? "" });
+				setSelectedDocState((prev) => (prev && prev.path === needsBodyPath ? { ...prev, ...full, content: full.content ?? "" } : prev));
+			})
+			.catch((err) => {
+				console.error("Failed to load doc body:", err);
+				if (!cancelled) setSelectedDocState((prev) => (prev && prev.path === needsBodyPath ? { ...prev, content: "" } : prev));
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [needsBodyPath, needsBodyKey]);
+
+	// First open on /docs/<path>: ask for that doc's body at once instead of after the list, and show it
+	// as soon as it arrives. The list still decides the sidebar; its doc then reuses this body.
+	const routeDocPath = location.pathname.match(/^\/docs\/(.+)$/)?.[1] ?? null;
+	useEffect(() => {
+		if (!routeDocPath || docsRef.current.length > 0) return;
+		let live = true;
+		getDoc(decodeURIComponent(routeDocPath))
+			.then((got) => {
+				if (!live || !got) return;
+				const full = got as unknown as Doc;
+				bodyCache.current.set(full.path, { key: docVersionKey(full), content: full.content ?? "" });
+				// Only while the list has not arrived; after that the list owns the selection.
+				if (docsRef.current.length === 0) setSelectedDocState((prev) => prev ?? { ...full, content: full.content ?? "" });
+			})
+			.catch(() => {});
+		return () => {
+			live = false;
+		};
+	}, [routeDocPath]);
+
 	// Persist filter state
 	useEffect(() => {
 		localStorage.setItem("docs-specs-only", String(showSpecsOnly));
@@ -65,19 +131,45 @@ export function DocsProvider({ children }: { children: React.ReactNode }) {
 		setShowSpecsOnlyState(show);
 	}, []);
 
+	// The list arrives a page at a time, newest update first: the first page paints the tree at once and
+	// the rest streams in behind it (a newer walk, from an SSE event, cancels the one in progress).
+	const walkRef = useRef<AbortController | null>(null);
+	const loadedOnce = useRef(false);
+	const [walking, setWalking] = useState(false);
 	const loadDocs = useCallback(() => {
+		walkRef.current?.abort();
+		const ctl = new AbortController();
+		walkRef.current = ctl;
 		setError(null);
-		getDocs()
-			.then((data) => {
-				setDocs(data as unknown as Doc[]);
-				setLoading(false);
-			})
-			.catch((err) => {
-				console.error("Failed to load docs:", err);
-				setError(err instanceof Error ? err.message : "Failed to load documentation");
-				setLoading(false);
-			});
+		(async () => {
+			const seen = new Map<string, Doc>();
+			let cursor: string | undefined;
+			setWalking(true);
+			for (;;) {
+				const page = await getDocsPage({ limit: DOC_PAGE, ...(cursor ? { cursor } : {}), signal: ctl.signal });
+				for (const d of page.docs) seen.set((d as unknown as Doc).path, d as unknown as Doc);
+				cursor = page.nextCursor;
+				// The first walk streams into the tree; a re-walk (after an update) swaps in only when complete,
+				// so nothing the person is looking at drops out meanwhile.
+				if (!loadedOnce.current || !cursor) {
+					setDocs([...seen.values()]);
+					setLoading(false);
+				}
+				if (!cursor) {
+					loadedOnce.current = true;
+					break;
+				}
+			}
+			setWalking(false);
+		})().catch((err) => {
+			if (ctl.signal.aborted) return;
+			console.error("Failed to load docs:", err);
+			setError(err instanceof Error ? err.message : "Failed to load documentation");
+			setLoading(false);
+			setWalking(false);
+		});
 	}, []);
+	useEffect(() => () => walkRef.current?.abort(), []);
 
 	// Initial load
 	useEffect(() => {
@@ -108,7 +200,7 @@ export function DocsProvider({ children }: { children: React.ReactNode }) {
 	useSSEEvent("tasks:refresh", () => refreshLinkedTasks());
 
 	const setSelectedDoc = useCallback((doc: Doc | null) => {
-		setSelectedDocState(doc);
+		setSelectedDocState(doc ? withCachedBody(doc, bodyCache.current) : null);
 		setIsEditing(false);
 		setLinkedTasksExpanded(false);
 	}, []);
@@ -197,8 +289,10 @@ export function DocsProvider({ children }: { children: React.ReactNode }) {
 			loading,
 			error,
 			selectedDoc,
+			bodyLoading,
 			setSelectedDoc,
 			selectDocByPath,
+			walking,
 			isEditing,
 			setIsEditing,
 			editedContent,
@@ -213,7 +307,7 @@ export function DocsProvider({ children }: { children: React.ReactNode }) {
 			navigateToFolder,
 		}),
 		[
-			docs, loading, error, selectedDoc, setSelectedDoc, selectDocByPath,
+			docs, loading, walking, error, selectedDoc, bodyLoading, setSelectedDoc, selectDocByPath,
 			isEditing, editedContent, linkedTasks, showSpecsOnly, setShowSpecsOnly,
 			linkedTasksExpanded, loadDocs, currentFolder, navigateToFolder,
 		]
