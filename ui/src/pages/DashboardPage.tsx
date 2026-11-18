@@ -14,6 +14,8 @@ import {
 	type RuntimeService,
 	type SDDResult,
 } from "../api/client";
+import { useDashboardTasks } from "../hooks/useDashboardTasks";
+import { useTaskCounts } from "../hooks/useTaskCounts";
 import { useConfig } from "../contexts/ConfigContext";
 import { useTimeTracker } from "../contexts/TimeTrackerContext";
 import { cn } from "../lib/utils";
@@ -28,10 +30,6 @@ import { PageHeader } from "@/ui/components/ui/knowns/blocks/page-header";
 import { TabsContent } from "@/ui/components/ui/knowns/tabs";
 import { buildThroughput, getAttentionItems } from "./dashboard/analytics";
 
-interface DashboardPageProps {
-	tasks: Task[];
-	loading: boolean;
-}
 
 interface RemoteData {
 	loading: boolean;
@@ -91,10 +89,17 @@ function EmptyState({
 	);
 }
 
-export default function DashboardPage({ tasks, loading }: DashboardPageProps) {
+export default function DashboardPage() {
 	const { config } = useConfig();
 	const dashboardLayout = useDashboardLayout();
 	const [tab, setTab] = useState("overview");
+	// The Overview reads a bounded window of recent tasks and takes its headline numbers from the
+	// server's counts; Analytics needs the whole history, so only that tab walks every page.
+	const analyticsOpen = tab === "analytics";
+	const feed = useDashboardTasks({ enabled: true, windowDays: analyticsOpen ? 36_500 : 90, maxPages: analyticsOpen ? 100 : 2 });
+	const tasks = feed.tasks;
+	const loading = !feed.ready;
+	const { counts: taskCounts } = useTaskCounts({ lifecycle: "current" });
 	const [customizeOpen, setCustomizeOpen] = useState(false);
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const { activeTimers, getElapsedForTask } = useTimeTracker();
@@ -115,7 +120,7 @@ export default function DashboardPage({ tasks, loading }: DashboardPageProps) {
 		};
 		const requests = [
 			getSDDStats().then((value) => markFresh("sdd", value)).catch(() => markError("Spec coverage")),
-			getDocs().then((value) => markFresh("docs", value)).catch(() => markError("Document inventory")),
+			getDocs({ summary: true }).then((value) => markFresh("docs", value)).catch(() => markError("Document inventory")),
 			memoryApi.list("project").then((value) => markFresh("memories", value)).catch(() => markError("Memory health")),
 			decisionApi.list().then((value) => markFresh("decisions", value)).catch(() => markError("Decision inventory")),
 			decisionApi.reviewInbox().then((value) => markFresh("decisionReview", value)).catch(() => markError("Decision review")),
@@ -278,10 +283,10 @@ export default function DashboardPage({ tasks, loading }: DashboardPageProps) {
 					className="bg-transparent"
 				>
 					<TabsContent value="overview" className="pt-5">
-						<OnboardingCard tasks={tasks.length} docs={remote.docs?.length ?? null} semanticSearch={!!config?.semanticSearch?.enabled} />
+						<OnboardingCard tasks={taskCounts?.total ?? tasks.length} docs={remote.docs?.length ?? null} semanticSearch={!!config?.semanticSearch?.enabled} />
 						{dashboardLayout.isVisible("summary") && (
 							<div className="mb-5">
-								<SummaryStrip tasks={tasks} doneByDay={doneByDay} />
+								<SummaryStrip tasks={tasks} doneByDay={doneByDay} statusCounts={taskCounts?.byStatus} />
 							</div>
 						)}
 						{nothingVisible && (

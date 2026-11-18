@@ -9,6 +9,7 @@ import {
   taskFileName,
 } from "../../models/id.ts";
 import type { Task, TaskTombstone } from "../../models/task.ts";
+import { readOrKeep, type ScanState } from "../core/dir-freshness.ts";
 import {
   linkRetrying,
   readUtf8Retrying,
@@ -42,6 +43,7 @@ import {
   parseIso,
   parseYamlMap,
   readDirSorted,
+  readDirStable,
   readOptionalTime,
   readTime,
   yamlScalar,
@@ -203,18 +205,19 @@ export class TaskStore {
    * the latest updatedAt (what listActive keeps) but the other file is left for the write and
    * doctor paths to repair.
    */
-  listActiveReadOnly(): Task[] {
-    return this.listDirReadOnly(this.tasksDir());
+  listActiveReadOnly(state?: ScanState<Task>): Task[] {
+    return this.listDirReadOnly(this.tasksDir(), state);
   }
 
-  listArchivedReadOnly(): Task[] {
-    return this.listDirReadOnly(this.archiveDir());
+  /** With a ScanState, a file that cannot be read keeps its entry from the previous scan (see readOrKeep). */
+  listArchivedReadOnly(state?: ScanState<Task>): Task[] {
+    return this.listDirReadOnly(this.archiveDir(), state);
   }
 
-  private listDirReadOnly(dir: string): Task[] {
+  private listDirReadOnly(dir: string, state?: ScanState<Task>): Task[] {
     const pass = sharedTaskParses.pass(dir + sep);
     try {
-      return this.listDirShared(dir, pass);
+      return this.listDirShared(dir, pass, state);
     } finally {
       pass.end(); // forget the files that are gone
     }
@@ -223,17 +226,23 @@ export class TaskStore {
   private listDirShared(
     dir: string,
     cache: { read: (path: string, parse: () => Task) => Task },
+    state?: ScanState<Task>,
   ): Task[] {
     const byId = new Map<string, Task>();
-    for (const e of readDirSorted(dir)) {
+    for (const e of readDirStable(dir, state?.previous)) {
       if (e.isDirectory() || !e.name.endsWith(".md")) continue;
       const path = join(dir, e.name);
-      let task: Task;
-      try {
-        task = cache.read(path, () => this.parseFile(path));
-      } catch {
-        continue;
+      let task: Task | undefined;
+      const read = () => cache.read(path, () => this.parseFile(path));
+      if (state) task = readOrKeep(state, path, read);
+      else {
+        try {
+          task = read();
+        } catch {
+          task = undefined;
+        }
       }
+      if (task === undefined) continue;
       const existing = byId.get(task.id);
       if (
         existing &&

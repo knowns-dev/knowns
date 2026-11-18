@@ -90,11 +90,7 @@ export default function AppShell() {
 	const { currentTaskId, closeTask } = useGlobalTask();
 	const navigate = useNavigate();
 	const location = useRouterState({ select: (state) => state.location });
-	const [tasks, setTasks] = useState<Task[]>([]);
 	const [directTask, setDirectTask] = useState<Task | null>(null);
-	const [loading, setLoading] = useState(true);
-	const [taskLoadError, setTaskLoadError] = useState<string | null>(null);
-	const currentRequestRef = useRef<{ generation: number; controller?: AbortController }>({ generation: 0 });
 	const directRequestRef = useRef<{ generation: number; controller?: AbortController }>({ generation: 0 });
 	const [projectActive, setProjectActive] = useState<boolean | null>(null);
 	const [serverVersion, setServerVersion] = useState<string>("");
@@ -113,35 +109,10 @@ export default function AppShell() {
 	});
 
 	const currentPage = getCurrentPage(location.pathname);
-	const currentTasks = tasks;
 	const routeTaskId = currentPage === "tasks" || currentPage === "kanban"
 		? getTaskIdFromLocation(location.pathname, location.searchStr, currentPage)
 		: null;
 	const requestedDirectTaskId = currentTaskId || routeTaskId;
-
-	const loadCurrentTasks = useCallback(async (showLoading = false) => {
-		currentRequestRef.current.controller?.abort();
-		const controller = new AbortController();
-		const generation = currentRequestRef.current.generation + 1;
-		currentRequestRef.current = { generation, controller };
-		if (showLoading) setLoading(true);
-		try {
-			const data = await api.getTasks({ summary: true, signal: controller.signal });
-			if (currentRequestRef.current.generation === generation) {
-				setTasks(data.filter((task) => task.lifecycleState !== "archived"));
-				setTaskLoadError(null);
-			}
-		} catch (error) {
-			if (!(error instanceof DOMException && error.name === "AbortError")) {
-				console.error("Failed to load tasks:", error);
-				if (currentRequestRef.current.generation === generation) {
-					setTaskLoadError(error instanceof Error ? error.message : "Tasks could not be loaded.");
-				}
-			}
-		} finally {
-			if (currentRequestRef.current.generation === generation) setLoading(false);
-		}
-	}, []);
 
 	// Update document title based on current page
 	useEffect(() => {
@@ -184,11 +155,6 @@ export default function AppShell() {
 	}, []);
 
 	useEffect(() => {
-		void loadCurrentTasks(true);
-		return () => currentRequestRef.current.controller?.abort();
-	}, [loadCurrentTasks]);
-
-	useEffect(() => {
 		directRequestRef.current.controller?.abort();
 		const generation = directRequestRef.current.generation + 1;
 		// The list holds summaries (no description, notes or time entries): an open task always comes from its own request.
@@ -216,25 +182,7 @@ export default function AppShell() {
 	}, [requestedDirectTaskId]);
 
 	useSSEEvent("tasks:updated", ({ task }) => {
-		currentRequestRef.current.controller?.abort();
-		currentRequestRef.current = { generation: currentRequestRef.current.generation + 1 };
-		setTasks((prevTasks) => {
-			const existingIndex = prevTasks.findIndex((t) => t.id === task.id);
-			if (task.lifecycleState === "archived") {
-				return existingIndex >= 0 ? prevTasks.filter((item) => item.id !== task.id) : prevTasks;
-			}
-			if (existingIndex >= 0) {
-				const newTasks = [...prevTasks];
-				newTasks[existingIndex] = task;
-				return newTasks;
-			}
-			return [...prevTasks, task];
-		});
-		setDirectTask((current) => current?.id === task.id ? task : current);
-	});
-
-	useSSEEvent("tasks:refresh", () => {
-		void loadCurrentTasks();
+		setDirectTask((current) => (current?.id === task.id ? task : current));
 	});
 
 	// Handle workspace switch — full page reload for clean state
@@ -245,14 +193,7 @@ export default function AppShell() {
 	}, []);
 
 	const handleTaskCreated = () => {
-		void loadCurrentTasks();
 		refreshDirectTask();
-	};
-
-	const handleTasksUpdate = (updatedTasks: Task[]) => {
-		currentRequestRef.current.controller?.abort();
-		currentRequestRef.current = { generation: currentRequestRef.current.generation + 1 };
-		setTasks(updatedTasks.filter((task) => task.lifecycleState !== "archived"));
 	};
 
 	const toggleTheme = async (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -316,7 +257,7 @@ export default function AppShell() {
 	const renderPage = () => {
 		switch (currentPage) {
 			case "dashboard":
-				return <DashboardPage tasks={currentTasks} loading={loading} />;
+				return <DashboardPage />;
 			// Kanban is no longer its own page: /kanban renders the unified Tasks
 			// page pinned to the Board view, so existing links keep working.
 			case "kanban":
@@ -328,12 +269,7 @@ export default function AppShell() {
 
 				return (
 					<TasksPage
-						tasks={currentTasks}
-						loading={loading}
-						error={taskLoadError}
-						onRetry={() => void loadCurrentTasks(true)}
 						onTasksUpdate={handleTaskCreated}
-						onTasksReplace={handleTasksUpdate}
 						selectedTask={selectedTask}
 						initialView={boardRoute ? "board" : undefined}
 						detailBasePath={boardRoute ? "/kanban" : "/tasks"}
@@ -363,7 +299,7 @@ export default function AppShell() {
 			case "config":
 				return <ConfigPage />;
 			default:
-				return <DashboardPage tasks={currentTasks} loading={loading} />;
+				return <DashboardPage />;
 		}
 	};
 
@@ -422,7 +358,6 @@ export default function AppShell() {
 
 					<TaskCreateForm
 					isOpen={showCreateForm}
-					allTasks={currentTasks}
 					onClose={() => setShowCreateForm(false)}
 					onCreated={handleTaskCreated}
 				/>
@@ -446,11 +381,9 @@ export default function AppShell() {
 
 				<TaskDetailSheet
 					task={currentTaskId && directTask?.id === currentTaskId ? directTask : null}
-					allTasks={currentTasks}
 					onClose={closeTask}
 					onUpdate={(updatedTask) => {
 						setDirectTask((cur) => (cur?.id === updatedTask.id ? updatedTask : cur));
-						setTasks((prev) => prev.map((t) => (t.id === updatedTask.id ? updatedTask : t)));
 					}}
 					onLifecycleChange={handleTaskCreated}
 				/>

@@ -2,6 +2,15 @@
 // behaviour (301 for a directory without a slash and for /index.html, Range support) and the SPA
 // fallback to index.html for every other path.
 import { getUiAsset, listUiAssets } from "../ui.ts";
+import {
+  type Encoding,
+  encode,
+  isCompressible,
+  MIN_COMPRESS_BYTES,
+  matches,
+  pickEncoding,
+  weakEtag,
+} from "./encoding.ts";
 import { httpError } from "./http.ts";
 
 const MIME: Record<string, string> = {
@@ -58,9 +67,42 @@ function contentType(path: string, bytes: Uint8Array): string {
   return text ? "text/plain; charset=utf-8" : "application/octet-stream";
 }
 
+// The embedded assets never change while the process runs: the validator and every compressed
+// form are computed once, the first time a client asks for them.
+const etags = new Map<string, string>();
+const encoded = new Map<string, Uint8Array>();
+
+/**
+ * Only the build's hashed /assets/* are managed: they get an immutable Cache-Control, an ETag
+ * with 304, and compression. Every other root static (favicons,
+ * manifest, robots, ...) is served exactly as the Go FileServer does, with no added header.
+ */
+function cacheControl(path: string): string | undefined {
+  if (path.startsWith("assets/")) return "public, max-age=31536000, immutable";
+  // index.html and the SPA fallback carry no validator and no Last-Modified, so a browser cannot
+  // reuse them without asking again: they already revalidate. Adding headers there would only
+  // break parity with the Go server.
+  return undefined;
+}
+
 function serveFile(req: Request, path: string, bytes: Uint8Array): Response {
   const type = contentType(path, bytes);
   const headers: Record<string, string> = { "Accept-Ranges": "bytes", "Content-Type": type };
+  const cc = cacheControl(path);
+  if (cc) {
+    headers["Cache-Control"] = cc;
+    headers.Vary = "Accept-Encoding";
+    let etag = etags.get(path);
+    if (!etag) {
+      etag = weakEtag(bytes);
+      etags.set(path, etag);
+    }
+    headers.ETag = etag;
+    if (matches(req.headers.get("if-none-match"), etag)) {
+      const { "Content-Type": _t, "Accept-Ranges": _r, ...h304 } = headers;
+      return new Response(null, { status: 304, headers: h304 });
+    }
+  }
   const range = req.headers.get("range");
   if (range) {
     const m = /^bytes=(\d*)-(\d*)$/.exec(range.trim());
@@ -91,6 +133,19 @@ function serveFile(req: Request, path: string, bytes: Uint8Array): Response {
         headers: { ...headers, "Content-Range": `bytes ${start}-${end}/${size}` },
       });
     }
+  }
+  const enc: Encoding | undefined =
+    cc && bytes.length >= MIN_COMPRESS_BYTES && isCompressible(type)
+      ? pickEncoding(req.headers.get("accept-encoding"), true)
+      : undefined;
+  if (enc) {
+    const key = `${enc}:${path}`;
+    let body = encoded.get(key);
+    if (!body) {
+      body = encode(bytes, enc, enc === "br" ? 9 : 9);
+      encoded.set(key, body);
+    }
+    return new Response(body, { status: 200, headers: { ...headers, "Content-Encoding": enc } });
   }
   return new Response(bytes, { status: 200, headers });
 }

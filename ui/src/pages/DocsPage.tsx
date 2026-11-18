@@ -1,3 +1,4 @@
+import { Skeleton } from "@/ui/components/ui/knowns/skeleton";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useRouterState } from "@tanstack/react-router";
 import {
@@ -75,7 +76,7 @@ function DocsPageInner() {
 	}
 
 	const {
-		docs, loading, error, selectedDoc, setSelectedDoc,
+		docs, loading, walking, error, selectedDoc, bodyLoading, setSelectedDoc,
 		isEditing, setIsEditing, editedContent, setEditedContent,
 		linkedTasks, showSpecsOnly, setShowSpecsOnly,
 		linkedTasksExpanded, setLinkedTasksExpanded,
@@ -378,6 +379,7 @@ function DocsPageInner() {
 	const currentDocAnnotations = selectedDoc ? annotationCtx.getByDoc(currentDocPath) : [];
 
 	const sidebarContent = (
+		<>
 		<DocsNavSidebar
 			docs={docs}
 			selectedDocPath={selectedDoc?.path}
@@ -388,6 +390,14 @@ function DocsPageInner() {
 			onCreateDoc={openCreateView}
 			onItemSelect={() => setMobileSidebarOpen(false)}
 		/>
+		{walking && !loading && (
+			<div className="flex flex-col gap-2 px-3 pb-3" role="status" aria-busy="true" aria-label="Loading more docs">
+				{[78, 64, 88].map((w, i) => (
+					<Skeleton key={i} className="h-4" style={{ width: `${w}%` }} />
+				))}
+			</div>
+		)}
+		</>
 	);
 
 	const docReference = selectedDoc ? `@doc/${toDisplayPath(selectedDoc.path).replace(/\.md$/, "")}` : "";
@@ -477,7 +487,7 @@ function DocsPageInner() {
 								</Button>
 							)}
 							{!isEditing ? (
-								<Button size="sm" variant="outline" onClick={handleEdit} disabled={selectedDoc.isImported} className="ml-1 h-8 gap-1.5" title={selectedDoc.isImported ? "Imported docs are read-only" : "Edit document"}>
+								<Button size="sm" variant="outline" onClick={handleEdit} disabled={selectedDoc.isImported || bodyLoading} className="ml-1 h-8 gap-1.5" title={selectedDoc.isImported ? "Imported docs are read-only" : "Edit document"}>
 									<Pencil className="size-3.5" /><span className="hidden sm:inline">Edit</span>
 								</Button>
 							) : (
@@ -525,6 +535,13 @@ function DocsPageInner() {
 											openTask={openTask}
 										/>
 										<div ref={markdownPreviewRef} className="prose-neutral dark:prose-invert relative">
+											{bodyLoading && (
+												<div className="space-y-3" role="status" aria-busy="true" aria-label="Loading document">
+													{[92, 100, 84, 96, 60].map((w, i) => (
+														<Skeleton key={i} className="h-4" style={{ width: `${w}%` }} />
+													))}
+												</div>
+											)}
 											<MDRenderWithHighlight
 												ref={lineHighlightRef}
 												content={selectedDoc.content || ""}

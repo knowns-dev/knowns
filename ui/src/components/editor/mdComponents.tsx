@@ -1,6 +1,6 @@
-import { useState, useRef, type ReactNode } from "react";
+import { useState, useRef, useEffect, useMemo, type ReactNode } from "react";
 import { ClipboardCheck, Check, Loader2 } from "lucide-react";
-import hljs from "highlight.js";
+import { getHljs, loadHljs } from "../../lib/hljs";
 import { CodeBlock } from "@/ui/components/ui/knowns/code-block/code-block";
 import { resolveLanguage, tokenize, type CodeLines } from "@/ui/components/ui/knowns/code-block/code-block-utils";
 import { extractTextFromChildren, slugifyHeading, type HeadingMeta } from "./headingUtils";
@@ -12,6 +12,8 @@ import { hljsHtmlToLines } from "./hljsTokens";
  */
 function highlightCode(code: string, language: string | undefined): CodeLines {
   if (resolveLanguage(language)) return tokenize(code, language);
+  const hljs = getHljs();
+  if (!hljs) return tokenize(code, undefined); // plain text until highlight.js has loaded
   try {
     const html = language && hljs.getLanguage(language)
       ? hljs.highlight(code, { language }).value
@@ -24,11 +26,23 @@ function highlightCode(code: string, language: string | undefined): CodeLines {
 
 /** A fenced code block in rendered markdown: language label, copy, wrap, and a fold past 30 lines. */
 export function MarkdownCodeBlock({ code, language }: { code: string; language?: string }) {
+  const needsHljs = !resolveLanguage(language);
+  const [loaded, setLoaded] = useState(() => getHljs() !== null);
+  useEffect(() => {
+    if (!needsHljs || loaded) return;
+    let live = true;
+    loadHljs().then(() => live && setLoaded(true)).catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [needsHljs, loaded]);
+  // A new function identity once loaded makes CodeBlock re-tokenize: text first, colour after.
+  const highlight = useMemo(() => (code: string, lang: string | undefined) => highlightCode(code, lang), [loaded]); // biome-ignore lint/correctness/useExhaustiveDependencies: identity must change when hljs loads
   return (
     <CodeBlock
       code={code}
       language={language}
-      highlight={highlightCode}
+      highlight={highlight}
       collapseAfter={30}
       className="my-4"
       aria-label={language ? `${language} code` : "Code"}

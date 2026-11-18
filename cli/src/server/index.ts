@@ -15,6 +15,7 @@ import { Registry } from "../storage/stores/registry.ts";
 import { type App, type ServerOptions, storageFor } from "./app.ts";
 import { AuthManager, authRoutes } from "./auth.ts";
 import { applyCors, corsPreflight, trustedOrigin } from "./cors.ts";
+import { finishApiResponse } from "./encoding.ts";
 import { goEncode } from "./gojson.ts";
 import {
   type Ctx,
@@ -257,7 +258,7 @@ export class Server {
         return finish(notFound());
       }
       const ctx = makeCtx(req, remote, hit.params);
-      return finish(await hit.handler(ctx));
+      return finish(await finishApiResponse(req, await hit.handler(ctx)));
     } catch (e) {
       if (this.opts.dev) console.error("panic serving request:", e);
       return httpError(500, "Internal Server Error");

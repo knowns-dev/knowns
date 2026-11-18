@@ -65,13 +65,22 @@ function acOf(t: Task) {
 /* ---------------------------------------------------------------- summary */
 
 /** Four numbers a person can act on, each a link to the work behind it. */
-export function SummaryStrip({ tasks, doneByDay }: { tasks: Task[]; doneByDay: number[] }) {
+export function SummaryStrip({ tasks, doneByDay, statusCounts }: { tasks: Task[]; doneByDay: number[]; statusCounts?: Record<string, number> }) {
 	const open = tasks.filter(isOpen);
+	// The server's counts cover every task; the loaded window only the recent ones.
+	const countOf = (match: (t: Task) => boolean, fallback: number) => {
+		if (!statusCounts) return fallback;
+		let n = 0;
+		for (const [status, c] of Object.entries(statusCounts)) {
+			if (match({ status, archived: false, lifecycleState: "active", completedAt: undefined } as unknown as Task)) n += c;
+		}
+		return n;
+	};
 	const doneThisWeek = doneByDay.reduce((a, b) => a + b, 0);
 	const tiles: { label: string; value: number; hint: string; tone: BadgeTone; icon: ReactNode; extra?: ReactNode }[] = [
-		{ label: "In progress", value: open.filter(isInProgress).length, hint: "being worked on now", tone: "info", icon: <CircleDot className="h-3.5 w-3.5" /> },
-		{ label: "Waiting for review", value: open.filter(isInReview).length, hint: "done, needs a check", tone: "accent", icon: <Eye className="h-3.5 w-3.5" /> },
-		{ label: "Blocked", value: open.filter(isBlocked).length, hint: "cannot move until unblocked", tone: "danger", icon: <OctagonAlert className="h-3.5 w-3.5" /> },
+		{ label: "In progress", value: countOf((t) => isOpen(t) && isInProgress(t), open.filter(isInProgress).length), hint: "being worked on now", tone: "info", icon: <CircleDot className="h-3.5 w-3.5" /> },
+		{ label: "Waiting for review", value: countOf((t) => isOpen(t) && isInReview(t), open.filter(isInReview).length), hint: "done, needs a check", tone: "accent", icon: <Eye className="h-3.5 w-3.5" /> },
+		{ label: "Blocked", value: countOf((t) => isOpen(t) && isBlocked(t), open.filter(isBlocked).length), hint: "cannot move until unblocked", tone: "danger", icon: <OctagonAlert className="h-3.5 w-3.5" /> },
 		{
 			label: "Done this week",
 			value: doneThisWeek,
