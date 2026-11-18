@@ -6,6 +6,7 @@ import {
 } from "../../cli/commands/doc-history.ts";
 import { docHooks } from "../../cli/commands/doc-hooks.ts";
 import { findError } from "../../domain/tasklifecycle/errors.ts";
+import { DEFAULT_PAGE_SIZE, parseLimit } from "../../domain/tasklifecycle/summary.ts";
 import type { Doc } from "../../models/doc.ts";
 import { goNow, goTime } from "../../storage/history/go-json.ts";
 import {
@@ -18,6 +19,7 @@ import {
 import { type App, requireStore } from "../app.ts";
 import { decodeStruct, type FieldType, GoJsonError, timeField } from "../gojson.ts";
 import { errMessage, jsonResponse, type Router, respondError } from "../http.ts";
+import { docIndexFor, parseDocSort } from "../list-index.ts";
 import { type Obj, readStruct } from "./support.ts";
 import { bestEffort, historyPageQuery } from "./tasks.ts";
 
@@ -150,11 +152,34 @@ export function registerDocs(r: Router, app: App): void {
   r.get(
     "/api/docs",
     guard((c) => {
+      const p = c.url.searchParams;
+      const paged = p.has("limit") || p.has("cursor");
+      const limit = parseLimit(p.get("limit") ?? undefined, DEFAULT_PAGE_SIZE);
+      if (typeof limit !== "number") return respondError(400, limit.error);
+      const sort = parseDocSort(p.get("sort"), paged);
+      if (sort === undefined || (paged && sort === "walk"))
+        return respondError(400, "sort must be path or updated-desc");
+      const summary = p.get("summary") === "true" || p.get("summary") === "1";
+      const query = {
+        tag: p.get("tag") ?? undefined,
+        folder: p.get("folder") ?? undefined,
+        query: p.get("query") ?? undefined,
+      };
+      // summary=true leaves out `content` and adds `size` (toDocSummary).
+      const wire = (d: Doc): Obj => (summary ? toDocSummary(d) : toDocResponse(d));
       try {
-        const docs = app.need().docs.list();
-        if (c.query("summary") === "true")
-          return jsonResponse(200, { docs: docs.map(toDocSummary) });
-        return jsonResponse(200, { docs: docs.map(toDocResponse) });
+        const index = docIndexFor(app.need().docs);
+        if (!paged) return jsonResponse(200, { docs: index.all(query).map(wire) });
+        const page = index.page({
+          sort,
+          query,
+          limit,
+          ...(p.get("cursor") !== null && { cursor: p.get("cursor") as string }),
+        });
+        if ("error" in page) return respondError(400, page.error);
+        const body: Obj = { docs: page.items.map(wire), total: page.total, limit: page.limit };
+        if (page.nextCursor) body.nextCursor = page.nextCursor;
+        return jsonResponse(200, body);
       } catch (e) {
         return respondError(500, errMessage(e));
       }
