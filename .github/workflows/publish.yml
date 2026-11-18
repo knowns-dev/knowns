@@ -133,10 +133,16 @@ jobs:
           path: ui/dist/
           retention-days: 1
 
-  # The two Windows targets are compiled on Windows: Bun only applies the icon and version resource
+  # windows-x64 is compiled on Windows: Bun only applies the icon and version resource
   # (compile.windows, see cli/scripts/lib.ts) when the host is Windows, and a macOS host silently
-  # leaves Bun's own icon and "Bun" product name on knowns.exe. The arm64 target cross-compiles
-  # fine from the x64 runner.
+  # leaves Bun's own icon and "Bun" product name on knowns.exe.
+  # windows-arm64 is NOT built here, on purpose: on windows-latest the cross-target compile fails on
+  # every attempt (publish run 44255800188, 3 attempts) with
+  #   Bundle failed: Failed to extract executable for 'bun-windows-aarch64-v1.3.12'.
+  #   The download may be incomplete.
+  # It is cross-compiled by build-binaries on macOS, as in v0.35.0. The arm64 knowns.exe therefore
+  # keeps Bun's icon and version info; its launcher still carries the Knowns resource because
+  # go-winres runs on any host. A native windows-11-arm build is the cleaner option later.
   build-windows-binaries:
     needs: [meta, verify]
     runs-on: windows-latest
@@ -163,21 +169,21 @@ jobs:
           name: ui-dist
           path: ui/dist/
 
-      - name: Build Windows binaries (x64, arm64) and the launcher
+      - name: Build Windows x64 binary and the launcher
         working-directory: cli
         env:
           KNOWNS_VERSION: ${{ needs.meta.outputs.version }}
           KNOWNS_REQUIRE_PROXY: "1"
         run: |
           bun install --frozen-lockfile
-          bun run build bun-windows-x64 bun-windows-arm64
+          bun run build bun-windows-x64
 
       - name: Binaries carry the Knowns icon and version resource
         env:
           VERSION: ${{ needs.meta.outputs.version }}
         shell: pwsh
         run: |
-          foreach ($t in 'windows-x64', 'windows-arm64') {
+          foreach ($t in 'windows-x64') {
             $v = (Get-Item "cli/dist/$t/knowns.exe").VersionInfo
             Write-Host "$t product=$($v.ProductName) description=$($v.FileDescription) version=$($v.FileVersion)"
             if ($v.ProductName -ne 'Knowns' -or $v.FileDescription -ne 'Knowns') { throw "$t does not carry the Knowns metadata" }
@@ -193,9 +199,9 @@ jobs:
           path: cli/dist/
           retention-days: 1
 
-  # One Bun job cross-compiles the four Unix targets. It runs on macOS so the darwin binaries get
+  # One Bun job cross-compiles the four Unix targets and windows-arm64. It runs on macOS so the darwin binaries get
   # the ad-hoc re-sign in cli/scripts/lib.ts; the version is injected with --define from the tag.
-  # The Windows binaries come from build-windows-binaries.
+  # windows-x64 comes from build-windows-binaries; windows-arm64 is built here (see the comment there).
   build-binaries:
     needs: [meta, verify, build-windows-binaries]
     runs-on: macos-15
@@ -222,14 +228,14 @@ jobs:
           name: ui-dist
           path: ui/dist/
 
-      - name: Build TypeScript binaries and the launcher (4 Unix targets)
+      - name: Build TypeScript binaries and the launcher (4 Unix targets + windows-arm64)
         working-directory: cli
         env:
           KNOWNS_VERSION: ${{ needs.meta.outputs.version }}
           KNOWNS_REQUIRE_PROXY: "1"
         run: |
           bun install --frozen-lockfile
-          bun run build bun-darwin-arm64 bun-darwin-x64 bun-linux-x64 bun-linux-arm64
+          bun run build bun-darwin-arm64 bun-darwin-x64 bun-linux-x64 bun-linux-arm64 bun-windows-arm64
 
       - name: Download Windows binaries
         uses: actions/download-artifact@v4
