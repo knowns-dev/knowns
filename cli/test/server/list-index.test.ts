@@ -38,6 +38,8 @@ const root = join(repo, ".knowns");
 let server: Server;
 let storage: ReturnType<typeof createStorage>;
 
+// biome-ignore lint/suspicious/noExplicitAny: test rows are plain JSON
+type Row = Record<string, any>;
 const ORDER = parseTaskSort(null) as TaskSortSpec;
 const STATUSES = ["todo", "in-progress", "done", "blocked"];
 
@@ -583,8 +585,8 @@ describe("task sorts, lifecycle and filters", () => {
     }
   });
 
-  async function traverse(query: string, limit = 5): Promise<{ id: string; [k: string]: any }[]> {
-    const out: { id: string }[] = [];
+  async function traverse(query: string, limit = 5): Promise<Row[]> {
+    const out: Row[] = [];
     let cursor = "";
     for (let n = 0; n < 200; n++) {
       const r = await get(
@@ -599,7 +601,7 @@ describe("task sorts, lifecycle and filters", () => {
   }
 
   const prioRank = (p: string) => ({ high: 0, medium: 1, low: 2 })[p as "high"] ?? 3;
-  const expected: Record<string, (a: any, b: any) => number> = {
+  const expected: Record<string, (a: Row, b: Row) => number> = {
     id: (a, b) => (a.id < b.id ? -1 : 1),
     title: (a, b) =>
       a.title.toLowerCase().localeCompare(b.title.toLowerCase(), "en") || (a.id < b.id ? -1 : 1),
@@ -632,9 +634,9 @@ describe("task sorts, lifecycle and filters", () => {
 
   test("assignee, spec and progress put the empty ones last in both directions", async () => {
     for (const [key, empty] of [
-      ["assignee", (t: any) => !t.assignee || t.assignee.trim() === ""],
-      ["spec", (t: any) => !t.spec],
-      ["progress", (t: any) => (t.acceptanceCriteria ?? []).length === 0],
+      ["assignee", (t: Row) => !t.assignee || t.assignee.trim() === ""],
+      ["spec", (t: Row) => !t.spec],
+      ["progress", (t: Row) => (t.acceptanceCriteria ?? []).length === 0],
     ] as const) {
       for (const suffix of ["", "-desc"]) {
         const full = await traverse(`sort=${key}${suffix}&lifecycle=all`, 200);
@@ -651,7 +653,7 @@ describe("task sorts, lifecycle and filters", () => {
       .filter((t) => (t.acceptanceCriteria ?? []).length > 0)
       .map(
         (t) =>
-          t.acceptanceCriteria.filter((a: any) => a.completed).length / t.acceptanceCriteria.length,
+          t.acceptanceCriteria.filter((a: Row) => a.completed).length / t.acceptanceCriteria.length,
       );
     expect(ratios).toEqual([...ratios].sort((a, b) => a - b));
   });
