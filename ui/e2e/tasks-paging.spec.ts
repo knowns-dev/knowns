@@ -127,7 +127,7 @@ test.describe("Server-paged Board columns", () => {
 		await page.goto(`${server.baseURL}/kanban`);
 		await expect(page.locator("span.font-mono", { hasText: /^#/ }).first()).toBeVisible();
 		await expect.poll(() => page.locator("span.font-mono", { hasText: /^#/ }).count()).toBe(20);
-		expect(calls.some((q) => q.includes("status=todo") && q.includes("sort=order") && q.includes("limit=20"))).toBe(true);
+		expect(calls.some((q) => q.includes("status=todo") && q.includes("sort=board") && q.includes("limit=20"))).toBe(true);
 		// The column badge carries the server count, not the loaded 20.
 		await expect(page.getByRole("button", { name: /To Do\s*1[3-9]\d/ })).toBeVisible();
 
