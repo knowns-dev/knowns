@@ -1,6 +1,6 @@
 // Port of internal/storage/task_store.go: tasks in .knowns/tasks/ and .knowns/archive/, deletion
 // tombstones, and the byte-exact markdown renderer.
-import { type Dirent, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, normalize, sep } from "node:path";
 import {
   newPrefixedTaskId,
@@ -43,6 +43,7 @@ import {
   parseIso,
   parseYamlMap,
   readDirSorted,
+  readDirStable,
   readOptionalTime,
   readTime,
   yamlScalar,
@@ -174,31 +175,6 @@ export function releaseTaskCache(root: string): void {
   sharedTaskParses.dropPrefix(root + sep);
 }
 
-/**
- * readdir, twice when the first listing lacks a file the previous scan had. A rename (an editor, an
- * external tool) can be missed by a listing that runs through the directory while it happens: the
- * old name is gone and the new one was added where the listing had already passed. The second
- * listing finds it; a file that is really deleted is absent from both, so it is dropped at once.
- * The union keeps a name either listing saw; one deleted in between fails to read and is kept for
- * one more scan by readOrKeep.
- */
-function listStable(dir: string, state: ScanState<Task> | undefined): Dirent[] {
-  const first = readDirSorted(dir);
-  if (!state?.previous) return first;
-  const names = new Set(first.map((e) => e.name));
-  let vanished = false;
-  for (const path of state.previous.keys()) {
-    if (!names.has(basename(path))) {
-      vanished = true;
-      break;
-    }
-  }
-  if (!vanished) return first;
-  const extra = readDirSorted(dir).filter((e) => !names.has(e.name));
-  if (extra.length === 0) return first;
-  return [...first, ...extra].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-}
-
 export class TaskStore {
   readonly root: string;
 
@@ -253,7 +229,7 @@ export class TaskStore {
     state?: ScanState<Task>,
   ): Task[] {
     const byId = new Map<string, Task>();
-    for (const e of listStable(dir, state)) {
+    for (const e of readDirStable(dir, state?.previous)) {
       if (e.isDirectory() || !e.name.endsWith(".md")) continue;
       const path = join(dir, e.name);
       let task: Task | undefined;

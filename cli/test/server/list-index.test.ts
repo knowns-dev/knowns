@@ -447,6 +447,72 @@ describe("doc list index", () => {
     expect(after.body.docs[0].path).toBe("bulk/doc-new");
   });
 
+  test("an external writer renaming and rewriting docs: counts never dip, no id twice per traversal", async () => {
+    const N = 150;
+    const dir = join(root, "docs", "storm");
+    mkdirSync(dir, { recursive: true });
+    const body = (i: number, title: string) =>
+      `---\ntitle: ${title}\ncreatedAt: '2026-02-01T00:00:00Z'\nupdatedAt: '2026-02-01T00:00:00Z'\ntags:\n  - t${i % 2}\n---\n\nbody ${i}\n`;
+    for (let i = 0; i < N; i++)
+      writeFileSync(join(dir, `d${String(i).padStart(3, "0")}.md`), body(i, `D ${i}`));
+    const writer = join(tmp, "doc-storm.ts");
+    writeFileSync(
+      writer,
+      `import { renameSync, writeFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+const dir = process.argv[2]; const N = ${N};
+const end = Date.now() + 3000; let n = 0;
+const files = new Map(readdirSync(dir).map((f) => [f.slice(1, 4), f]));
+while (Date.now() < end) {
+  const i = (n * 37) % N; const key = String(i).padStart(3, "0");
+  const to = "d" + key + "-r" + n + ".md";
+  renameSync(join(dir, files.get(key)), join(dir, to)); files.set(key, to);
+  // not atomic, like an editor: a reader may see the file empty
+  writeFileSync(join(dir, to), "---\\ntitle: R " + n + "\\ncreatedAt: '2026-02-01T00:00:00Z'\\nupdatedAt: '2026-02-01T00:00:00Z'\\ntags:\\n  - t" + (n % 2) + "\\n---\\n\\nbody " + n + "\\n");
+  n++; await Bun.sleep(3);
+}
+`,
+    );
+    const traverse = async (): Promise<{ ids: string[]; total: number }> => {
+      const ids: string[] = [];
+      let cursor = "";
+      let total = 0;
+      for (let n = 0; n < 100; n++) {
+        const r = await get(
+          `/api/docs?limit=40&summary=true&sort=updated-desc&folder=storm${cursor ? `&cursor=${cursor}` : ""}`,
+        );
+        expect(r.status).toBe(200);
+        total = r.body.total;
+        ids.push(...r.body.docs.map((d: { path: string }) => d.path));
+        if (!r.body.nextCursor) break;
+        cursor = r.body.nextCursor;
+      }
+      return { ids, total };
+    };
+    await traverse();
+    const child = Bun.spawn([process.execPath, writer, dir], {
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    let dips = 0;
+    let dupes = 0;
+    let reads = 0;
+    while (child.exitCode === null) {
+      const { ids, total } = await traverse();
+      reads++;
+      if (new Set(ids).size !== ids.length) dupes++;
+      if (ids.length < N || total < N) {
+        dips++;
+      }
+      await Bun.sleep(5);
+    }
+    expect(await child.exited).toBe(0);
+    expect(reads).toBeGreaterThan(3);
+    expect(dips).toBe(0);
+    expect(dupes).toBe(0);
+    rmSync(dir, { recursive: true, force: true });
+  }, 60_000);
+
   test("a doc in a new subfolder is seen", async () => {
     const ix = new DocIndex(storage.docs, { maxAgeMs: 60_000 });
     const n = () => ix.all({}).length;

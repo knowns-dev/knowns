@@ -18,6 +18,7 @@ import {
   formatIso,
   parseYamlMap,
   readDirSorted,
+  readDirStable,
   readTime,
   yamlScalar,
 } from "./internal.ts";
@@ -299,7 +300,7 @@ export class DocStore {
   ): Doc[] {
     const docs: Doc[] = [];
     track?.dirs.push(dir);
-    for (const e of readDirSorted(dir)) {
+    for (const e of readDirStable(dir, track?.previous)) {
       const full = join(dir, e.name);
       if (e.isDirectory()) {
         const sub = relBase === "" ? e.name : `${relBase}/${e.name}`;
