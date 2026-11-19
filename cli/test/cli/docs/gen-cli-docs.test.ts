@@ -84,7 +84,12 @@ function withoutSpecDeltas(ts: Map<string, string>): Map<string, string> {
     if (name === "knowns_browser.md") {
       b = b
         .split("\n")
-        .filter((l) => !l.startsWith("| `--foreground` |") && !l.startsWith("| `--stop` |"))
+        .filter(
+          (l) =>
+            !l.startsWith("| `--foreground` |") &&
+            !l.startsWith("| `--keep-alive` |") &&
+            !l.startsWith("| `--stop` |"),
+        )
         .join("\n");
     }
     if (name === "knowns_task.md") {
@@ -321,8 +326,9 @@ describe("lint", () => {
 });
 
 describe("D9", () => {
-  test("browser documents --foreground and --stop", () => {
+  test("browser documents --foreground, --keep-alive and --stop", () => {
     const page = tsPages.get("knowns_browser.md") ?? "";
+    expect(page).toContain("| `--keep-alive` |");
     expect(page).toContain("| `--foreground` |");
     expect(page).toContain("| `--stop` |");
   });
