@@ -8,6 +8,7 @@ import {
   OPERATION_DONE_EXPIRY_MS,
   OPERATION_EVENT_MIN_INTERVAL_MS,
   OPERATION_FAILED_CAP,
+  OPERATION_FAILED_MAX_AGE_MS,
   type Operation,
   type OperationEvent,
   type OperationEventName,
@@ -15,6 +16,7 @@ import {
   type OperationSnapshot,
   type OperationState,
 } from "../runtime/operation-types.ts";
+import { type DismissStore, memoryDismissals } from "./dismissed-operations.ts";
 
 export interface RegistryDeps {
   /** Sends one SSE event to every open tab. */
@@ -31,6 +33,12 @@ export interface RegistryDeps {
   minIntervalMs?: number;
   doneExpiryMs?: number;
   failedCap?: number;
+  /** A failed daemon job older than this is not shown. */
+  failedMaxAgeMs?: number;
+  /** The project the server shows now, reported in the snapshot. */
+  currentProjectRoot?: () => string | null;
+  /** Where dismissed daemon rows are remembered; memory only when absent. */
+  dismissals?: DismissStore;
 }
 
 export interface StartSpec {
@@ -80,7 +88,7 @@ const VISIBLE_JOB_KINDS = new Set(["reindex-search", "index-all-files"]);
 
 export class OperationRegistry {
   private readonly entries = new Map<string, Entry>();
-  private readonly dismissedJobs = new Set<string>();
+  private readonly dismissals: DismissStore;
   private seq = 0;
   private counter = 0;
   private clients = 0;
@@ -92,12 +100,15 @@ export class OperationRegistry {
   private readonly minInterval: number;
   private readonly doneExpiry: number;
   private readonly failedCap: number;
+  private readonly failedMaxAge: number;
 
   constructor(private readonly deps: RegistryDeps) {
     this.now = deps.now ?? Date.now;
     this.minInterval = deps.minIntervalMs ?? OPERATION_EVENT_MIN_INTERVAL_MS;
     this.doneExpiry = deps.doneExpiryMs ?? OPERATION_DONE_EXPIRY_MS;
     this.failedCap = deps.failedCap ?? OPERATION_FAILED_CAP;
+    this.failedMaxAge = deps.failedMaxAgeMs ?? OPERATION_FAILED_MAX_AGE_MS;
+    this.dismissals = deps.dismissals ?? memoryDismissals();
   }
 
   // ---- web operations -------------------------------------------------------------------------
@@ -176,9 +187,27 @@ export class OperationRegistry {
 
   // ---- requests from the routes ---------------------------------------------------------------
 
+  /**
+   * Loads the daemon job source if this process has not yet. A snapshot or a dismiss does not
+   * depend on an open event stream: the queues can be read at any time.
+   */
+  async load(): Promise<void> {
+    if (this.jobSource || this.closed || !this.deps.jobs) return;
+    try {
+      this.jobSource = await this.deps.jobs();
+    } catch {
+      // no job source: only web operations
+    }
+  }
+
   snapshot(): OperationSnapshot {
     this.refreshJobs();
-    return { seq: this.seq, operations: [...this.entries.values()].map((e) => ({ ...e.op })) };
+    this.dropStaleJobs();
+    return {
+      seq: this.seq,
+      operations: [...this.entries.values()].map((e) => ({ ...e.op })),
+      currentProjectRoot: this.deps.currentProjectRoot?.() ?? null,
+    };
   }
 
   get(id: string): Operation | undefined {
@@ -263,13 +292,62 @@ export class OperationRegistry {
       : { status: "conflict", error: "retry failed" };
   }
 
+  /**
+   * Removes a finished row. A daemon job is remembered as dismissed (it survives a restart of this
+   * server and of the runtime). One this registry has no entry for (no event stream was open when
+   * it was listed) is checked against the job source: an unfinished job conflicts, any other job id
+   * is dismissed, so the call is idempotent.
+   */
   dismiss(id: string): { status: "ok" | "unknown" | "conflict" } {
     const e = this.entries.get(id);
-    if (!e) return { status: "unknown" };
+    if (!e) {
+      if (!id.startsWith("job:")) return { status: "unknown" };
+      const live = this.listJobs().find((o) => o.id === id);
+      if (live && !isTerminalState(live.state)) return { status: "conflict" };
+      this.dismissals.add([id]);
+      return { status: "ok" };
+    }
     if (!isTerminalState(e.op.state)) return { status: "conflict" };
-    if (!e.web) this.dismissedJobs.add(id);
+    if (!e.web) this.dismissals.add([id]);
     this.remove(id);
     return { status: "ok" };
+  }
+
+  /**
+   * Dismisses every finished row (done, failed, cancelled), of one project when `projectRoot` is
+   * given. Returns the ids removed.
+   */
+  dismissFinished(projectRoot?: string | null): string[] {
+    this.refreshJobs();
+    const ids = [...this.entries.values()]
+      .filter((e) => isTerminalState(e.op.state))
+      .filter((e) => !projectRoot || e.web || e.op.projectRoot === projectRoot)
+      .map((e) => e.op.id);
+    this.dismissals.add(ids.filter((id) => !this.entries.get(id)?.web));
+    for (const id of ids) this.remove(id);
+    return ids;
+  }
+
+  private listJobs(): Operation[] {
+    try {
+      return this.jobSource?.listJobOperations() ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  private tooOld(op: Operation): boolean {
+    return (
+      op.source === "daemon" &&
+      op.state === "failed" &&
+      op.finishedAt !== null &&
+      this.now() - op.finishedAt > this.failedMaxAge
+    );
+  }
+
+  /** A failed daemon row that aged past the window while this server ran leaves the list. */
+  private dropStaleJobs(): void {
+    for (const [id, e] of this.entries) if (!e.web && this.tooOld(e.op)) this.remove(id);
   }
 
   // ---- SSE clients and the daemon job source ---------------------------------------------------
@@ -310,7 +388,7 @@ export class OperationRegistry {
   /** Merges the job source's current list: new jobs, and ones that vanished from the queue. */
   private refreshJobs(): void {
     const src = this.jobSource;
-    if (!src || !this.unsubJobs) return;
+    if (!src) return;
     let list: Operation[];
     try {
       list = src.listJobOperations();
@@ -330,7 +408,7 @@ export class OperationRegistry {
   }
 
   private mergeJob(op: Operation): void {
-    if (this.closed || this.dismissedJobs.has(op.id)) return;
+    if (this.closed || this.dismissals.has(op.id) || this.tooOld(op)) return;
     // Housekeeping jobs are shown only when they failed (see VISIBLE_JOB_KINDS).
     if (!VISIBLE_JOB_KINDS.has(op.kind) && op.state !== "failed") return;
     const cur = this.entries.get(op.id);

@@ -12,9 +12,11 @@ import { onRuntimeStatusChange } from "../runtime/status-events.ts";
 import { Manager } from "../storage/core/manager.ts";
 import type { Store } from "../storage/core/store.ts";
 import { Registry } from "../storage/stores/registry.ts";
+import { VERSION } from "../version.ts";
 import { type App, type ServerOptions, storageFor } from "./app.ts";
 import { AuthManager, authRoutes } from "./auth.ts";
 import { applyCors, corsPreflight, trustedOrigin } from "./cors.ts";
+import { fileDismissals } from "./dismissed-operations.ts";
 import { finishApiResponse } from "./encoding.ts";
 import { goEncode } from "./gojson.ts";
 import {
@@ -122,6 +124,9 @@ export class Server {
       emit: (name, data) => this.sse.broadcast({ type: name, data }),
       jobs: async () => import("../runtime/job-operations.ts"),
       watchJobs: (poke) => watchJobQueues(poke),
+      dismissals: fileDismissals(),
+      // the queues are keyed by the knowledge root, which is what a daemon row's projectRoot holds
+      currentProjectRoot: () => this.activeStore()?.root ?? null,
     });
     this.sse.onChange = (n) => this.operations.clientsChanged(n);
     this.app = {
@@ -166,6 +171,9 @@ export class Server {
       queueMicrotask(() => this.shutdownResolve?.());
       return jsonResponse(200, { status: "shutting down" });
     });
+    // The server's own version: a page that outlived `knowns update` compares it with the one it loaded
+    // with (the SSE `connected` payload stays as it is, the Go server defines it).
+    r.get("/api/version", () => jsonResponse(200, { version: VERSION }));
     r.get("/api/status", (c) => this.handleStatus(c));
     r.get("/api/runtime/ps", () => {
       this.watchServices();

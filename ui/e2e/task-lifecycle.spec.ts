@@ -353,7 +353,8 @@ test.describe("Task lifecycle workflows", () => {
 		expect(executeBodies).toHaveLength(1);
 		expect(executeBodies[0].background).toBe(true);
 		expect(executeBodies[0].execute).toBe(true);
-		expect(executeBodies[0].ids).toEqual([doneID, "blocked1"]);
+		// only the Task the preview marked eligible is sent; the skipped one stays out of the request
+		expect(executeBodies[0].ids).toEqual([doneID]);
 		expect(new Set(executeBodies[0].ids).size).toBe(executeBodies[0].ids?.length);
 	});
 

@@ -35,6 +35,8 @@ export interface Operation {
 export interface OperationSnapshot {
 	seq: number;
 	operations: Operation[];
+	/** The project this server shows now; daemon rows of other projects are history of other work. */
+	currentProjectRoot?: string | null;
 }
 
 export interface OperationEvent {
