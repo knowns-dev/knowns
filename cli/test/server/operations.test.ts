@@ -203,7 +203,7 @@ describe("OperationRegistry", () => {
       message: null,
       startedAt: 1,
       updatedAt: 2,
-      finishedAt: state === "done" || state === "failed" ? 3 : null,
+      finishedAt: state === "done" || state === "failed" ? Date.now() : null,
     });
     const src: JobOperationSource = {
       listJobOperations: () => {
@@ -454,7 +454,7 @@ describe("batch archive as an operation", () => {
     ).toBe(true);
   });
 
-  test("a batch that did not change every task says how many and why, and Run again takes only what is left", async () => {
+  test("a batch that did not change every task says how many and why, and Run again only re-sends what is eligible", async () => {
     const mk = async (title: string, status: string) => {
       const r = await send(ts, "POST", "/api/tasks", {
         body: JSON.stringify({ title, status }),
@@ -478,16 +478,123 @@ describe("batch archive as an operation", () => {
       if (last && ["done", "failed", "cancelled"].includes(last.state)) break;
       await Bun.sleep(50);
     }
+    // A request that names a task which is not done still reports it, as it always did.
     expect(last?.state).toBe("failed");
     expect(last?.error).toBeTruthy();
     expect(last?.message).toContain("2 archived");
     expect(last?.message).toContain("1 not changed");
     expect(last?.message).toContain(`#${active}`);
     expect(last?.message).toContain("must be done");
-    // Whatever the state, the untouched task is the only one a re-run would carry.
     expect(last?.retryable).toBe(true);
+    // Run again re-previews what is left: the one task is still not done, so there is nothing to
+    // archive, and the run says so instead of failing with business_denied again.
     const again = JSON.parse((await send(ts, "POST", `/api/operations/${op.id}/retry`)).text)
       .operation as Operation;
-    expect(again.progress?.total).toBe(1);
+    expect(again.title).toBe("Nothing to archive");
+    expect(again.state).toBe("done");
+    expect(again.error).toBeNull();
+  });
+});
+
+describe("tray endpoints with no event stream open (KN-726E8A)", () => {
+  beforeAll(async () => {
+    ts = await startSide("ts", seedTs());
+  });
+  afterAll(() => ts && stopSide(ts));
+
+  test("dismissing a daemon job answers 200 (it used to answer 404), and an unknown web id still 404s", async () => {
+    const ok = await send(ts, "POST", "/api/operations/job%3Aghost/dismiss");
+    expect(ok.status).toBe(200);
+    expect(JSON.parse(ok.text)).toEqual({ id: "job:ghost" });
+    // a client that does not encode the colon reaches the same route
+    expect((await send(ts, "POST", "/api/operations/job:ghost2/dismiss")).status).toBe(200);
+    expect((await send(ts, "POST", "/api/operations/op_nope_1/dismiss")).status).toBe(404);
+  });
+
+  test("Dismiss all answers with the ids it removed, with or without a project", async () => {
+    const all = await send(ts, "POST", "/api/operations/dismiss-finished", {
+      body: JSON.stringify({}),
+      headers: J,
+    });
+    expect(all.status).toBe(200);
+    expect(Array.isArray(JSON.parse(all.text).ids)).toBe(true);
+    const one = await send(ts, "POST", "/api/operations/dismiss-finished", {
+      body: JSON.stringify({ projectRoot: "/nowhere" }),
+      headers: J,
+    });
+    expect(JSON.parse(one.text).ids).toEqual([]);
+  });
+});
+
+describe("archive sends only what is eligible (KN-KCPGZM)", () => {
+  const done: string[] = [];
+  const open: string[] = [];
+  beforeAll(async () => {
+    ts = await startSide("ts", seedTs());
+    const make = async (title: string, status: string) => {
+      const r = await send(ts, "POST", "/api/tasks", {
+        body: JSON.stringify({ title, status }),
+        headers: J,
+      });
+      return JSON.parse(r.text).id as string;
+    };
+    for (let i = 0; i < 2; i++) done.push(await make(`Finished ${i}`, "done"));
+    for (let i = 0; i < 3; i++) open.push(await make(`Open ${i}`, "todo"));
+  });
+  afterAll(() => ts && stopSide(ts));
+
+  const start = async (ids: string[]) => {
+    const r = await send(ts, "POST", "/api/tasks/batch-archive", {
+      body: JSON.stringify({ ids, execute: true, background: true }),
+      headers: J,
+    });
+    return { status: r.status, op: JSON.parse(r.text).operation as Operation };
+  };
+  const finished = async (id: string): Promise<Operation> => {
+    for (let i = 0; i < 400; i++) {
+      const o = (
+        JSON.parse((await send(ts, "GET", `/api/operations/${id}`)).text) as {
+          operation: Operation;
+        }
+      ).operation;
+      if (["done", "failed", "cancelled"].includes(o.state)) return o;
+      await Bun.sleep(50);
+    }
+    throw new Error("operation did not finish");
+  };
+
+  test("none eligible: the operation finishes with nothing to archive and never fails with business_denied", async () => {
+    const { status, op } = await start(open);
+    expect(status).toBe(202);
+    const fin = await finished(op.id);
+    expect(fin.state).toBe("done");
+    expect(fin.error).toBeNull();
+    expect(fin.message).toContain("Nothing to archive");
+    expect(`${fin.message} ${fin.error}`).not.toContain("business_denied");
+    for (const id of open) {
+      expect(JSON.parse((await send(ts, "GET", `/api/tasks/${id}`)).text).lifecycleState).not.toBe(
+        "archived",
+      );
+    }
+  });
+
+  test("Run again on a mixed batch that failed sends only what is eligible now", async () => {
+    const first = await start([...done, ...open]);
+    const fin = await finished(first.op.id);
+    expect(fin).toMatchObject({ state: "failed", retryable: true });
+    expect(fin.message).toContain("2 archived, 3 not changed");
+    const r = await send(ts, "POST", `/api/operations/${first.op.id}/retry`);
+    const again = JSON.parse(r.text).operation as Operation;
+    // the two done tasks are archived already and the three open ones cannot be: nothing to do
+    expect(again.title).toBe("Nothing to archive");
+    expect(again.state).toBe("done");
+    expect(again.message).not.toContain("business_denied");
+  });
+
+  test("a second archive of ids that are all archived already is nothing to archive", async () => {
+    const again = await start([...done]);
+    const fin = await finished(again.op.id);
+    expect(fin.state).toBe("done");
+    expect(fin.message).toContain("Nothing to archive");
   });
 });

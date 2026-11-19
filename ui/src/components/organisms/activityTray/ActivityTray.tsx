@@ -10,6 +10,8 @@ import { Check, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { cn } from "../../../lib/utils";
 import { useOperations } from "../../../contexts/OperationsContext";
+import { inProject } from "../../../lib/operationsStore";
+import { isTerminalOperation } from "../../../models/operation";
 import { useSSEEvent } from "../../../contexts/SSEContext";
 import { ActivityStack } from "../../ui/knowns/blocks/agents/activity-stack";
 import { Spinner } from "../../ui/knowns/spinner";
@@ -19,8 +21,36 @@ import { toActivityItem, type PendingAction } from "./toActivityItem";
 /** How long the popover stays open on its own when something starts or fails. */
 export const AUTO_OPEN_MS = 4000;
 
+const SCOPE_KEY = "knowns:tray-all-projects";
+
+function readScope(): boolean {
+	try {
+		return localStorage.getItem(SCOPE_KEY) === "1";
+	} catch {
+		return false;
+	}
+}
+
 export function ActivityTray() {
-	const { operations, cancel, retry, dismiss, hideHere } = useOperations();
+	const { operations: everything, cancel, retry, dismiss, dismissFinished, hideHere, currentProjectRoot } = useOperations();
+	// The project being viewed by default; "All projects" lists the rest and names each row's project.
+	const [allProjects, setAllProjects] = useState(readScope);
+	const toggleScope = useCallback(() => {
+		setAllProjects((on) => {
+			try {
+				localStorage.setItem(SCOPE_KEY, on ? "0" : "1");
+			} catch {
+				// remembering the choice is a convenience
+			}
+			return !on;
+		});
+	}, []);
+	const operations = useMemo(
+		() => (allProjects ? everything : everything.filter((op) => inProject(op, currentProjectRoot))),
+		[everything, allProjects, currentProjectRoot],
+	);
+	const others = everything.length - everything.filter((op) => inProject(op, currentProjectRoot)).length;
+	const finishedCount = operations.filter(isTerminalOperation).length;
 	const [pending, setPending] = useState<ReadonlyMap<string, PendingAction>>(() => new Map());
 	const [open, setOpenState] = useState(false);
 	// The same value in a ref: the auto-open timer and the events read it outside a render.
@@ -67,9 +97,10 @@ export function ActivityTray() {
 					retry: (id) => run(id, "retry", () => retry(id)),
 					dismissOnServer: (id) => run(id, "dismiss", () => dismiss(id)),
 					hideHere,
+					labelProject: allProjects,
 				}),
 			),
-		[operations, pending, run, cancel, retry, dismiss, hideHere],
+		[operations, pending, run, cancel, retry, dismiss, hideHere, allProjects],
 	);
 
 	useEffect(() => {
@@ -267,6 +298,36 @@ export function ActivityTray() {
 							"pointer-events-none -translate-y-1 opacity-0 [&_button]:invisible [&_ul]:invisible",
 				)}
 			>
+				{(others > 0 || allProjects || finishedCount > 1) && (
+					<div className="mb-1 flex items-center justify-between gap-2 px-1 text-[12px]" data-testid="activity-tray-controls">
+						{others > 0 || allProjects ? (
+							<button
+								type="button"
+								role="switch"
+								aria-checked={allProjects}
+								data-testid="activity-all-projects"
+								onClick={toggleScope}
+								className="cursor-pointer rounded px-1 text-muted-foreground underline-offset-2 transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:text-foreground hover:underline"
+							>
+								{allProjects ? "All projects" : others > 0 ? `This project · ${others} more in other projects` : "This project"}
+							</button>
+						) : (
+							<span />
+						)}
+						{finishedCount > 0 && (
+							<button
+								type="button"
+								data-testid="activity-dismiss-all"
+								onClick={() =>
+									run("*", "dismiss", () => dismissFinished(allProjects ? null : currentProjectRoot))
+								}
+								className="cursor-pointer rounded px-1 text-muted-foreground underline-offset-2 transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:text-foreground hover:underline"
+							>
+								Dismiss all
+							</button>
+						)}
+					</div>
+				)}
 				<ActivityStack
 					items={items}
 					label="Background operations"

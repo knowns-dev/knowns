@@ -282,7 +282,9 @@ async function executeLifecycle(
   // An executed batch is an operation of the Activity Tray: progress per chunk, cancel after the
   // current chunk, and (background) an answer at once so closing the dialog changes nothing.
   if (isBatchRun(request)) {
-    const run = startBatchOperation(app, storage, request);
+    // A background batch (the tray's) runs only what the preview calls eligible; a plain request
+    // keeps the API's own contract (every id is processed and the denied ones are reported).
+    const run = await startBatchOperation(app, storage, request, "as-sent");
     if (background) return jsonResponse(202, { operation: run.operation });
     const { response, error } = await run.done;
     return jsonResponse(lifecycleStatus(response, error), responseToWire(response));
@@ -296,7 +298,68 @@ async function executeLifecycle(
 
 type LifecycleOutcome = Awaited<ReturnType<Service["executePublic"]>>;
 
-function startBatchOperation(
+/**
+ * The ids of a batch the lifecycle rules would change now. A batch with none of them is "nothing to
+ * archive" (a finished operation), not a denied request; a run again carries only these ids.
+ */
+async function eligibleOnly(
+  app: App,
+  storage: Storage,
+  request: LifecycleRequest,
+): Promise<{ ids: string[]; preview: LifecycleOutcome }> {
+  const preview = await lifecycleService(app, storage).executePublic(
+    { ...request, execute: false },
+    app.opts.allowTaskHardDelete === true,
+  );
+  const eligible = new Set(preview.response.items.filter((i) => i.eligible).map((i) => i.taskId));
+  return { ids: (request.ids ?? []).filter((id) => eligible.has(id)), preview };
+}
+
+async function startBatchOperation(
+  app: App,
+  storage: Storage,
+  request: LifecycleRequest,
+  mode: "as-sent" | "retry" = "as-sent",
+): Promise<{ operation: TrayOperation; done: Promise<LifecycleOutcome> }> {
+  if (mode === "retry" && request.operation === "batch_archive") {
+    const { ids, preview } = await eligibleOnly(app, storage, request);
+    if (ids.length === 0) {
+      const handle = app.operations.start({
+        kind: request.operation,
+        title: "Nothing to archive",
+        project: projectNameOf(storage),
+        projectRoot: app.projectRoot,
+        state: "running",
+      });
+      const why = unchangedReasons(
+        preview.response.items.map((i) => ({
+          taskId: i.taskId,
+          changed: false,
+          reasons: i.reasons,
+        })),
+      );
+      handle.finish(`None of the ${(request.ids ?? []).length} tasks can be archived now${why}`);
+      return {
+        operation: app.operations.get(handle.id) as TrayOperation,
+        done: Promise.resolve(preview),
+      };
+    }
+    // A run again takes only what can be changed now. A first run is answered at once (a preview of
+    // hundreds of tasks would delay the 202) and keeps the ids it was sent.
+    request = { ...request, ids };
+  }
+  return startBatchRun(app, storage, request);
+}
+
+function projectNameOf(storage: Storage): string | null {
+  try {
+    return storage.config.load()?.name ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function startBatchRun(
   app: App,
   storage: Storage,
   request: LifecycleRequest,
@@ -319,7 +382,10 @@ function startBatchOperation(
     progress: { done: 0, total },
     cancellable: true,
     // "Run again" retries only what is left: the tasks this run did not change.
-    retry: () => startBatchOperation(app, storage, { ...request, ids: [...remaining] }).operation,
+    // Run again re-previews what is left: only the tasks that can be changed now are sent.
+    retry: async () =>
+      (await startBatchOperation(app, storage, { ...request, ids: [...remaining] }, "retry"))
+        .operation,
   });
   const done = (async (): Promise<LifecycleOutcome> => {
     let outcome: LifecycleOutcome;
@@ -343,7 +409,18 @@ function startBatchOperation(
     const left = Math.max(0, total - r.processed);
     const why = unchangedReasons(r.items);
     if (r.stopped) handle.cancelled(`${r.changed} ${word}, ${left} left${why}`);
-    else if (outcome.error) {
+    else if (
+      archive &&
+      r.changed === 0 &&
+      r.items.length > 0 &&
+      r.items.every(
+        (i) =>
+          (i.reasons?.length ?? 0) > 0 && !i.reasons?.some((x) => x.code === "operation_failed"),
+      )
+    ) {
+      // Not a failure: none of the tasks can be archived now (not done, or held by an active child).
+      handle.finish(`Nothing to archive${why}`);
+    } else if (outcome.error) {
       handle.fail(
         firstLine(errMessage(outcome.error)),
         `${r.changed} ${word}, ${r.items.filter((i) => !i.changed).length} not changed${why}`,

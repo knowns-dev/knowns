@@ -25,7 +25,13 @@ import {
   validateLeaseOwner,
 } from "./lifecycle.ts";
 import { type Request, type Response, runtimeErrorPayload, zeroLocation } from "./protocol.ts";
-import { cleanupEndpoint, listenEndpoint, readJSON, writeJSON } from "./transport.ts";
+import {
+  cleanupEndpoint,
+  listenEndpoint,
+  readJSON,
+  takeEarlyConnections,
+  writeJSON,
+} from "./transport.ts";
 
 /** The slice of lsp.Manager the daemon uses; the real Manager satisfies it structurally. */
 export interface DaemonManager {
@@ -43,6 +49,12 @@ export interface DaemonManager {
 export interface RunOptions {
   /** Milliseconds; 0 disables the idle exit. */
   idleTimeoutMs?: number;
+  /**
+   * Starts the idle countdown at the first request instead of at listen (tests): a 100 ms timeout
+   * that begins before the first client has even dialled ends the daemon under load, and the
+   * client then finds no socket at all.
+   */
+  idleClockStartsAtFirstRequest?: boolean;
   /** Replaces the project manager (tests). */
   manager?: DaemonManager;
   /** Replaces the config reload done by apply_config (tests). */
@@ -66,6 +78,7 @@ export async function runWithOptions(ctx: Ctx, root: string, opts: RunOptions): 
       writeState(paths, newState(paths, process.pid));
       const server = new Server(identity, paths, token, manager, opts.idleTimeoutMs ?? 0);
       if (opts.reloadConfig) server.reloadConfigOverride = opts.reloadConfig;
+      server.idleClockStartsAtFirstRequest = opts.idleClockStartsAtFirstRequest ?? false;
       await server.serve(ctx, listener);
     } finally {
       listener.close();
@@ -99,6 +112,7 @@ export class Server {
   private leases = new Map<string, Lease>();
   private conns = new Set<net.Socket>();
   reloadConfigOverride: (() => void) | undefined;
+  idleClockStartsAtFirstRequest = false;
   /** Not in Go: a client that never sends its request is dropped after this (a test seam). */
   requestReadTimeoutMs = 30_000;
 
@@ -111,7 +125,7 @@ export class Server {
   ) {}
 
   serve(ctx: Ctx, listener: net.Server): Promise<void> {
-    this.markActivity();
+    if (!this.idleClockStartsAtFirstRequest) this.markActivity();
     return new Promise<void>((resolve) => {
       let finished = false;
       const finish = () => {
@@ -127,9 +141,14 @@ export class Server {
         finish();
       };
       const onAbort = () => closeAll();
+      const early = takeEarlyConnections(listener);
       listener.on("connection", (conn) => {
         void this.handle(conn);
       });
+      for (const e of early) {
+        void this.handle(e.conn);
+        e.replay();
+      }
       listener.on("error", () => closeAll());
       listener.on("close", finish);
       let timer: ReturnType<typeof setInterval> | undefined;

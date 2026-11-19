@@ -17,6 +17,8 @@ export interface TrayHandlers {
 	hideHere: (id: string) => void;
 	/** Requests in flight, by operation id. */
 	pending: ReadonlyMap<string, PendingAction>;
+	/** Rows of every project are listed: each daemon row says which project it is from. */
+	labelProject?: boolean;
 }
 
 /**
@@ -64,7 +66,7 @@ export function toActivityItem(op: Operation, h: TrayHandlers): ActivityItem {
 	return {
 		kind: "operation",
 		id: op.id,
-		title: op.title,
+		title: h.labelProject && op.project ? `${op.title} · ${op.project}` : op.title,
 		// A failure puts its reason on the collapsed line too (not only in the open card) and links to Runtime.
 		message: failed ? failureDetail(op) : (op.message ?? undefined),
 		state,
