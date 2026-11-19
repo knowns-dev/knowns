@@ -4,6 +4,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { readWindowsNative } from "./process-identity-win32.ts";
 
 /** The file name of a path in either separator style (a Windows path is read on any host). */
 const baseName = (path: string): string => path.split(/[\\/]/).pop() ?? "";
@@ -130,6 +131,18 @@ export function spawnRetryingSpurious<T extends { status: number | null; error?:
 }
 
 function readWindows(pid: number): ProcessInfo | undefined {
+  // The kernel answers in microseconds; PowerShell stays as the way out when it cannot (a process
+  // this user may not open, or an FFI that did not load).
+  const native = readWindowsNative(pid);
+  if (native !== undefined) {
+    lastFailure = "";
+    lastPath = "native";
+    return native;
+  }
+  return readWindowsPowerShell(pid);
+}
+
+function readWindowsPowerShell(pid: number): ProcessInfo | undefined {
   const script =
     `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}"; ` +
     "if ($p) { [pscustomobject]@{ c = ($p.CommandLine + ''); e = ($p.ExecutablePath + ''); " +

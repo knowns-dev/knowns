@@ -11,9 +11,11 @@ import {
   isProcessInstance,
   isRuntimeDaemonCommand,
   lastReadFailure,
+  lastReadPath,
   readProcessInfo,
   spawnRetryingSpurious,
 } from "../../src/runtime/process-identity.ts";
+import { readWindowsNative } from "../../src/runtime/process-identity-win32.ts";
 import * as q from "../../src/runtime/queue.ts";
 import { setProcessHome } from "../helpers/process-env.ts";
 
@@ -59,6 +61,33 @@ describe("readProcessInfo", () => {
     expect(info?.commandLine.length).toBeGreaterThan(0);
     expect(Math.abs((info?.startedAt ?? 0) - Date.now())).toBeLessThan(24 * 3600 * 1000);
   });
+  test.skipIf(process.platform !== "win32")(
+    "Windows reads a process from the kernel, not from PowerShell: own pid, a child's command line, a dead pid",
+    async () => {
+      const started = Date.now();
+      const own = readWindowsNative(process.pid);
+      expect(own?.commandLine.length).toBeGreaterThan(0);
+      expect(own?.commandLine.toLowerCase()).toContain("bun");
+      expect(Math.abs((own?.startedAt ?? 0) - started)).toBeLessThan(24 * 3600 * 1000);
+      // The same child through the native path and through readProcessInfo (which prefers it).
+      const child = spawn(process.execPath, ["-e", "setTimeout(()=>{}, 20000)", "marker-arg-7"], {
+        stdio: "ignore",
+      });
+      try {
+        await new Promise((r) => setTimeout(r, 100));
+        const t0 = performance.now();
+        const info = readProcessInfo(child.pid as number);
+        expect(performance.now() - t0).toBeLessThan(500);
+        expect(lastReadPath()).toBe("native");
+        expect(info?.commandLine).toContain("marker-arg-7");
+        expect(Math.abs((info?.startedAt ?? 0) - started)).toBeLessThan(10_000);
+      } finally {
+        child.kill();
+      }
+      await new Promise((r) => setTimeout(r, 200));
+      expect(readWindowsNative(child.pid as number)).toBeUndefined();
+    },
+  );
   test("still reads a live process when PATH does not lead to the system tools", () => {
     // CI Windows: a PATH without System32 made `powershell.exe` unfindable and the read returned
     // undefined in 5 ms; an unknown identity means no stale daemon is ever recognised.
