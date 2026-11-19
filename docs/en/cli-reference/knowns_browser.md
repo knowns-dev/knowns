@@ -18,6 +18,7 @@ knowns browser [flags]
 | `--allow-task-hard-delete` | `bool` | — | Grant this server instance Task hard-delete capability |
 | `--dev` | `bool` | — | Enable development mode (verbose logging) |
 | `--foreground` | `bool` | — | Keep serving in this terminal; Ctrl+C stops the UI (default: the runtime daemon serves it) |
+| `--keep-alive` | `bool` | — | Keep the UI running with no tab open until it is stopped (default: closes 30 minutes after the last tab; KNOWNS_UI_IDLE_MS=0 does the same) |
 | `--no-open` | `bool` | — | Don't automatically open browser |
 | `--open` | `bool` | — | Open browser after starting |
 | `--password` | `string` | — | Protect WebUI with a password (in-memory only) |
