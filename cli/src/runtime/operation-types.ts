@@ -64,6 +64,8 @@ export interface OperationRemovedEvent {
 export interface OperationSnapshot {
   seq: number;
   operations: Operation[];
+  /** The project this server shows now (the daemon rows' `projectRoot` of the same project); the tray scopes to it by default. */
+  currentProjectRoot?: string | null;
 }
 
 /** Cancel outcome of the daemon job source. */
@@ -82,3 +84,5 @@ export interface JobOperationSource {
 export const OPERATION_EVENT_MIN_INTERVAL_MS = 250;
 export const OPERATION_DONE_EXPIRY_MS = 15_000;
 export const OPERATION_FAILED_CAP = 50;
+/** A failed daemon job older than this is history, not a current problem: the tray does not show it. */
+export const OPERATION_FAILED_MAX_AGE_MS = 24 * 3_600_000;

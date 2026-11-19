@@ -1,4 +1,7 @@
 import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import { test, expect, type Page } from "@playwright/test";
 import { startServer, type TestServer } from "./helpers";
 
@@ -681,5 +684,123 @@ test.describe("Activity tray", () => {
 		});
 		expect(offenders).toEqual([]);
 		await expect(tray).toContainText("1 archived, 1 not changed");
+	});
+
+	// ---- KN-726E8A: scope, age, Dismiss all and persistence ------------------------------------
+
+	const HOUR = 3_600_000;
+	const queueKey = (root: string): string => {
+		let h = 0;
+		for (const ch of root) h = (Math.imul(h, 31) + (ch.codePointAt(0) as number)) >>> 0;
+		return `${basename(dirname(root))}-${h.toString(16).padStart(8, "0")}`;
+	};
+
+	/** Dead-lettered reindex jobs in the runtime queues of the shown project and of another one. */
+	async function seedFailedJobs(
+		page: Page,
+		jobs: { id: string; project: "this" | "other"; ageMs: number }[],
+	): Promise<{ otherName: string }> {
+		const snap = (await (await page.request.get(`${server.baseURL}/api/operations`)).json()) as { currentProjectRoot: string | null };
+		const here = snap.currentProjectRoot as string;
+		const other = join(mkdtempSync(join(tmpdir(), "knowns-e2e-other-")), "elsewhere");
+		mkdirSync(join(other, ".knowns"), { recursive: true });
+		const runtime = join(server.homeDir, ".knowns", "runtime");
+		mkdirSync(join(runtime, "queues"), { recursive: true });
+		writeFileSync(join(runtime, "projects.json"), JSON.stringify([here, other]));
+		for (const [root, which] of [[here, "this"], [other, "other"]] as const) {
+			const list = jobs
+				.filter((j) => j.project === which)
+				.map((j) => ({
+					id: j.id,
+					key: `reindex-search:${j.id}`,
+					kind: "reindex-search",
+					requestedAt: new Date(Date.now() - j.ageMs - HOUR).toISOString(),
+					// a dead letter is held for 24 h from the moment it died
+					runAfter: new Date(Date.now() + 24 * HOUR - j.ageMs).toISOString(),
+					startedAt: null,
+					lastError: `boom ${j.id}`,
+					deadLetter: true,
+				}));
+			writeFileSync(join(runtime, "queues", `${queueKey(root)}.json`), JSON.stringify({ jobs: list, recent: [] }));
+		}
+		return { otherName: basename(other) };
+	}
+
+	test("failures of other projects and old ones are not current: this project by default, All projects labels each row", async ({ page }) => {
+		await gotoReady(page, "/tasks");
+		const { otherName } = await seedFailedJobs(page, [
+			{ id: "mine-fresh", project: "this", ageMs: 2 * HOUR },
+			{ id: "mine-old", project: "this", ageMs: 40 * HOUR },
+			{ id: "theirs-fresh", project: "other", ageMs: 2 * HOUR },
+		]);
+		await gotoReady(page, "/tasks"); // a reload takes a new snapshot
+		const tray = await openTray(page);
+		// the old one (40 h) is history; the other project's is not shown by default
+		await expect(tray.locator("button[aria-expanded]", { hasText: "Rebuilding the search index" })).toHaveCount(1);
+		await expect(page.getByTestId("activity-indicator")).toHaveAccessibleName("1 background operation, 1 failed");
+		const toggle = page.getByTestId("activity-all-projects");
+		await expect(toggle).toContainText("1 more in other projects");
+		await toggle.click();
+		await expect(tray.locator("button[aria-expanded]", { hasText: "Rebuilding the search index" })).toHaveCount(2);
+		await expect(tray).toContainText(`Rebuilding the search index · ${otherName}`);
+		await toggle.click();
+		await expect(tray.locator("button[aria-expanded]", { hasText: "Rebuilding the search index" })).toHaveCount(1);
+	});
+
+	test("Dismiss works with no event stream open, Dismiss all clears finished rows, and a dismissal stays after a reload", async ({ page }) => {
+		await gotoReady(page, "/tasks");
+		await seedFailedJobs(page, [
+			{ id: "a", project: "this", ageMs: HOUR },
+			{ id: "b", project: "this", ageMs: HOUR },
+			{ id: "c", project: "other", ageMs: HOUR },
+		]);
+		// No page, no stream: a request straight to the API. It answered 404 before.
+		const api = await page.request.post(`${server.baseURL}/api/operations/${encodeURIComponent("job:a")}/dismiss`);
+		expect(api.status()).toBe(200);
+		await gotoReady(page, "/tasks");
+		const tray = await openTray(page);
+		await expect(tray.locator("button[aria-expanded]", { hasText: "Rebuilding the search index" })).toHaveCount(1); // b; a is dismissed
+		await page.getByTestId("activity-dismiss-all").click();
+		await expect(page.getByTestId("activity-indicator")).toBeHidden();
+		await page.reload();
+		await page.getByTestId("activity-tray-root").waitFor({ state: "attached" });
+		await expect(page.getByTestId("activity-indicator")).toBeHidden();
+		// c belongs to the other project: Dismiss all of this project left it alone
+		const all = (await operations(page)) as (Op & { projectRoot?: string })[];
+		expect(all.map((o) => o.id)).toEqual(["job:c"]);
+	});
+
+	// ---- KN-KCPGZM ------------------------------------------------------------------------------
+
+	test("the archive confirm sends only the Tasks the preview marked eligible, and a preview with none says there is nothing to do", async ({ page }) => {
+		const finished = createTask("Archive finished", "--status done");
+		const open = createTask("Archive open", "--status in-progress");
+		await gotoReady(page, "/tasks");
+		await page.getByRole("button", { name: /^List$/ }).click().catch(() => undefined);
+		const sent: { ids: string[]; execute: boolean }[] = [];
+		await page.route("**/api/tasks/batch-archive", async (route) => {
+			const body = route.request().postDataJSON() as { ids: string[]; execute: boolean };
+			if (body.execute) sent.push(body);
+			await route.continue();
+		});
+		const rows = page.getByRole("row");
+		await expect(rows.filter({ hasText: "Archive finished" })).toBeVisible();
+		await rows.filter({ hasText: "Archive finished" }).getByRole("checkbox").check();
+		await rows.filter({ hasText: "Archive open" }).getByRole("checkbox").check();
+		await page.getByRole("button", { name: /Archive 2 selected/ }).click();
+		await expect(page.getByTestId(`lifecycle-item-${open}`)).toBeVisible();
+		await page.getByTestId("lifecycle-confirm").click();
+		await expect.poll(() => sent.length).toBe(1);
+		expect(sent[0]?.ids).toEqual([finished]);
+
+		// only the open one: nothing to archive, no confirm button, no error alert
+		await page.getByRole("checkbox", { name: /Select row/, checked: true }).first().uncheck().catch(() => undefined);
+		await page.reload();
+		await rows.filter({ hasText: "Archive open" }).getByRole("checkbox").check();
+		await page.getByRole("button", { name: /Archive 1 selected/ }).click();
+		await expect(page.getByTestId("lifecycle-nothing")).toBeVisible();
+		await expect(page.getByTestId("lifecycle-confirm")).toHaveCount(0);
+		await expect(page.getByTestId("task-lifecycle-dialog").getByRole("alert")).toHaveCount(0);
+		expect(sent).toHaveLength(1);
 	});
 });
