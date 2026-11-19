@@ -169,8 +169,13 @@ export function idleNotice(ms: number | undefined): string {
   if (ms === 0) {
     return "It keeps running with no tab open until you stop it (--keep-alive, KNOWNS_UI_IDLE_MS=0)";
   }
-  const m = Math.max(1, Math.round((ms ?? 30 * 60_000) / 60_000));
-  return `It closes by itself ${m} min after the last tab leaves; --keep-alive or KNOWNS_UI_IDLE_MS=0 keeps it running`;
+  const grace = ms ?? 30 * 60_000;
+  // Under a minute the unit is seconds: "1 min" for a 4 s grace would be a lie.
+  const after =
+    grace < 60_000
+      ? `${Math.max(1, Math.ceil(grace / 1000))} s`
+      : `${Math.round(grace / 60_000)} min`;
+  return `It closes by itself ${after} after the last tab leaves; --keep-alive or KNOWNS_UI_IDLE_MS=0 keeps it running`;
 }
 
 /**
