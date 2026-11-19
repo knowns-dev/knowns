@@ -1,5 +1,5 @@
 // KN-69EHXE: review fixes for the version-scoped daemon registry (P2-1, P2-2, P3-1, P3-2).
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   existsSync,
   mkdirSync,
@@ -22,6 +22,7 @@ import {
 } from "../../src/runtime/daemon-registry.ts";
 import * as q from "../../src/runtime/queue.ts";
 import { VERSION } from "../../src/version.ts";
+import { spawnLivePid } from "../helpers/live-pid.ts";
 
 let root: string;
 let saved: string | undefined;
@@ -35,7 +36,9 @@ afterEach(() => {
   else process.env.KNOWNS_RUNTIME_ROOT = saved;
 });
 const ME = process.pid;
-const OTHER = process.ppid;
+const other = spawnLivePid();
+const OTHER = other.pid;
+afterAll(() => other.kill());
 
 describe("P2-1: registry files that survive a reboot", () => {
   test("predatesBoot compares the registered time with the boot time", () => {

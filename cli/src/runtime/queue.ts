@@ -21,7 +21,7 @@ import { basename, dirname, extname, isAbsolute, join } from "node:path";
 import { effectiveRuntimeWatch } from "../models/config.ts";
 import { spawnDetached } from "../platform/detached-spawn.ts";
 import { goJson } from "../search/json.ts";
-import { goClean } from "../search/qdrant/pointer.ts";
+import { goClean, isQdrantOwnershipMismatch } from "../search/qdrant/pointer.ts";
 import { goTimeString } from "../search/time.ts";
 import {
   isWindowsFileBusy,
@@ -1634,7 +1634,13 @@ function completeMutation(job: Job, err: Error | undefined): (state: QueueState)
     if (finalJob.target) result.target = finalJob.target;
     if (err) result.error = err.message;
     if (err && isCancelError(err)) result.cancelled = true;
-    if (finalJob.kind === JOB_QDRANT_RECONCILE && err) {
+    if (finalJob.kind === JOB_QDRANT_RECONCILE && err && isQdrantOwnershipMismatch(err.message)) {
+      // The project moved: no retry and no dead letter can fix it, only a rebuild. The job is
+      // parked (dropped; the rebuild reads every source again) and the Activity list keeps ONE
+      // result carrying the fix instead of one failure per edited file.
+      result.retryable = false;
+      state.recent = (state.recent ?? []).filter((r) => r.error !== err.message);
+    } else if (finalJob.kind === JOB_QDRANT_RECONCILE && err) {
       result.retryable = true;
       if ((finalJob.attempts ?? 0) >= QDRANT_RETRY_LIMIT) {
         result.deadLetter = true;
@@ -1678,6 +1684,26 @@ function releaseDeadLetter(job: Job, now: string): void {
   job.attempts = 0;
   job.lastError = "";
   job.runAfter = now;
+}
+
+/**
+ * Drops the dead letters (and parked results) left by an ownership mismatch. Called once a rebuild
+ * has taken the pointer over: those jobs described changes the rebuild has just indexed, so they
+ * must not be retried and must not keep showing as failures. Returns how many it dropped.
+ */
+export function clearOwnershipMismatchJobs(storeRoot: string): number {
+  let dropped = 0;
+  updateQueue(storeRoot, (state) => {
+    const keep = state.jobs.filter(
+      (j) => !(j.deadLetter && isQdrantOwnershipMismatch(j.lastError)),
+    );
+    dropped = state.jobs.length - keep.length;
+    state.jobs = keep;
+    const recent = (state.recent ?? []).filter((r) => !isQdrantOwnershipMismatch(r.error));
+    dropped += (state.recent ?? []).length - recent.length;
+    state.recent = recent;
+  });
+  return dropped;
 }
 
 export function retryJob(storeRoot: string, jobId: string): Job {

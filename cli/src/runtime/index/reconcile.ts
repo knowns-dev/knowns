@@ -12,6 +12,7 @@ import {
   collectionNameFromUUID,
   loadQdrantPointer,
   QDRANT_POINTER_SCHEMA_VERSION,
+  QdrantOwnershipMismatchError,
   type QdrantPointer,
   storeRootFingerprint,
 } from "../../search/qdrant/pointer.ts";
@@ -22,7 +23,7 @@ import { CHUNK_VERSION, type Chunk, type EmbedderProvider } from "../../search/t
 import type { Storage } from "../../storage/adapters.ts";
 import { canonicalDocHash, canonicalTaskHash } from "../../storage/history/entities.ts";
 import { ensureManagedQdrant } from "../qdrant.ts";
-import { nowString, type QdrantIntent } from "../queue.ts";
+import { clearOwnershipMismatchJobs, nowString, type QdrantIntent } from "../queue.ts";
 import {
   normalizeIntentDocPath,
   proveQdrantIntent,
@@ -66,7 +67,7 @@ export async function validateTargetedCollection(
     throw new Error("qdrant active pointer collectionUUID is invalid");
   }
   if (pointer.owner.storeRootFingerprint !== storeRootFingerprint(storage.store.root)) {
-    throw new Error("qdrant active pointer ownership mismatch");
+    throw new QdrantOwnershipMismatchError();
   }
   const info = await client.inspectCollection(pointer.collectionName);
   if (!info.exists) throw new Error("qdrant active collection is unavailable");
@@ -165,6 +166,19 @@ export interface ReconcileDeps {
   ensureManaged?: (res: ReturnType<typeof resolveEffectiveVectorStore>) => Promise<void>;
 }
 
+const ownershipCleared = new Set<string>();
+
+/** The pointer is owned by this path (it validated): drop what an earlier mismatch left behind. */
+function clearMismatchJobsOnce(storeRoot: string): void {
+  if (ownershipCleared.has(storeRoot)) return;
+  ownershipCleared.add(storeRoot);
+  try {
+    clearOwnershipMismatchJobs(storeRoot);
+  } catch {
+    ownershipCleared.delete(storeRoot);
+  }
+}
+
 export async function executeQdrantReconciliation(
   storage: Storage,
   env: SearchEnvironment,
@@ -194,6 +208,7 @@ export async function executeQdrantReconciliation(
   await (deps.ensureManaged ?? ensureManagedQdrant)(resolved);
   const client = qdrantClientForStore(storage, env);
   await validateTargetedCollection(storage, env, pointer, client);
+  clearMismatchJobsOnce(storeRoot);
   const session = openSemanticSession(storage, env);
   try {
     if (!(session.vecStore instanceof QdrantVectorStore)) {
