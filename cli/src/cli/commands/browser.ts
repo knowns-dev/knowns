@@ -151,8 +151,21 @@ interface DaemonServeArgs {
   dev: boolean;
   allowTaskHardDelete: boolean;
   shouldOpen: boolean;
+  /** --port was given: never moved to the port an older UI held. */
+  portGiven: boolean;
   /** 0.35.x behavior: stay in the terminal as the listener's lease (D9). */
   foreground: boolean;
+  /** Detached grace in ms with no tab open; 0 keeps it until stopped; undefined = the default. */
+  idleMs: number | undefined;
+}
+
+/** How a detached UI will end, said at startup. `ms` 0 = never; undefined = the 30 minute default. */
+export function idleNotice(ms: number | undefined): string {
+  if (ms === 0) {
+    return "It keeps running with no tab open until you stop it (--keep-alive, KNOWNS_UI_IDLE_MS=0)";
+  }
+  const m = Math.max(1, Math.round((ms ?? 30 * 60_000) / 60_000));
+  return `It closes by itself ${m} min after the last tab leaves; --keep-alive or KNOWNS_UI_IDLE_MS=0 keeps it running`;
 }
 
 /**
@@ -164,10 +177,26 @@ async function serveFromDaemon(
   ctx: CommandContext,
   a: DaemonServeArgs,
 ): Promise<{ served: true } | { served: false; port: number }> {
-  const { requestDaemonListener } = await import("../../runtime/ui-client.ts");
+  const { requestDaemonListener, takeOverOlderListeners } = await import(
+    "../../runtime/ui-client.ts"
+  );
+  // KN-ZV8WGG: an upgrade leaves the old version's UI on the port; replace it there, not next to it.
+  let wantPort = a.port;
+  const freed = await takeOverOlderListeners({
+    projectRoot: a.projectRoot,
+    port: a.port,
+    password: a.password,
+  }).catch(() => [] as number[]);
+  if (freed.length > 0) {
+    const first = freed[0] as number;
+    if (!a.portGiven) wantPort = first;
+    ctx.print(
+      `  ${StyleDim.render(`Replaced the previous version's UI on port ${freed.join(", ")}`)}\n`,
+    );
+  }
   const outcome = await requestDaemonListener(
     {
-      port: a.port,
+      port: wantPort,
       storeRoot: a.storeRoot,
       projectRoot: a.projectRoot,
       password: a.password,
@@ -175,16 +204,14 @@ async function serveFromDaemon(
       dev: a.dev,
       allowTaskHardDelete: a.allowTaskHardDelete,
       mode: a.foreground ? "lease" : "detached",
-      ...(Number(ctx.env.KNOWNS_UI_IDLE_MS) > 0
-        ? { idleMs: Number(ctx.env.KNOWNS_UI_IDLE_MS) }
-        : {}),
+      ...(a.idleMs !== undefined ? { idleMs: a.idleMs } : {}),
     },
     { env: ctx.env },
   );
   if (!outcome.ok) {
     if (ctx.env.KNOWNS_DEBUG_PROXY === "1")
       ctx.printErr(`daemon UI unavailable: ${outcome.reason}\n`);
-    return { served: false, port: a.port };
+    return { served: false, port: wantPort };
   }
   const { listener } = outcome;
   const url = `http://localhost:${listener.port}`;
@@ -193,9 +220,9 @@ async function serveFromDaemon(
     `  ${StyleSuccess.render("●")}  ${StyleBold.render("Knowns")} ${StyleDim.render(`v${VERSION}`)}\n`,
   );
   ctx.print("\n");
-  if (listener.port !== a.port) {
+  if (listener.port !== wantPort) {
     ctx.print(
-      `  ${StyleWarning.render("↷")}  Port ${a.port} is busy, using ${listener.port} instead\n`,
+      `  ${StyleWarning.render("↷")}  Port ${wantPort} is busy, using ${listener.port} instead\n`,
     );
   }
   ctx.print(`  ${StyleInfo.render("→")}  ${StyleBold.render(url)}\n`);
@@ -207,9 +234,7 @@ async function serveFromDaemon(
     ctx.print(
       `  ${StyleDim.render(`Stop it with: knowns browser --stop --port ${listener.port}`)}\n`,
     );
-    ctx.print(
-      `  ${StyleDim.render("It closes by itself after a while with no tab open (KNOWNS_UI_IDLE_MS)")}\n\n`,
-    );
+    ctx.print(`  ${StyleDim.render(idleNotice(listener.idleMs ?? a.idleMs))}\n\n`);
     if (a.shouldOpen) openBrowser(url);
     listener.release();
     return { served: true };
@@ -302,6 +327,13 @@ export default defineCommand({
     },
     {
       type: "bool",
+      name: "keep-alive",
+      usage:
+        "Keep the UI running with no tab open until it is stopped (default: closes 30 minutes after the last tab; KNOWNS_UI_IDLE_MS=0 does the same)",
+      default: false,
+    },
+    {
+      type: "bool",
       name: "stop",
       usage: "Stop the UI running on --port, or for this project",
       default: false,
@@ -314,6 +346,7 @@ export default defineCommand({
     const restart = ctx.flags.bool("restart");
     const foreground = ctx.flags.bool("foreground");
     const stopFlag = ctx.flags.bool("stop");
+    const keepAlive = ctx.flags.bool("keep-alive");
     const dev = ctx.flags.bool("dev");
     const tunnelFlag = ctx.flags.bool("tunnel");
     const passwordFlag = ctx.flags.string("password");
@@ -382,6 +415,7 @@ export default defineCommand({
     // tunnel manager is tied to the process that owns the listener.
     // --dev logs verbosely to this terminal, so it stays in-process too.
     if (!tunnelFlag && !dev && store) {
+      const { parseUiIdleEnv } = await import("../../runtime/ui-host.ts");
       const outcome = await serveFromDaemon(ctx, {
         port,
         storeRoot: store.root,
@@ -392,6 +426,8 @@ export default defineCommand({
         allowTaskHardDelete,
         shouldOpen,
         foreground,
+        portGiven,
+        idleMs: keepAlive ? 0 : parseUiIdleEnv(ctx.env),
       });
       if (outcome.served) return;
       port = outcome.port;

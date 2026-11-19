@@ -1,11 +1,14 @@
 // The launcher side of the daemon's UI host (@task-KN-B3NWK3): ask the runtime daemon to serve the
 // web UI on a port. Returns undefined, with the reason, whenever the daemon cannot do it, and the
 // caller then runs its own server as `knowns browser` always did (spec D6, FR-9).
+import { readdirSync } from "node:fs";
 import net from "node:net";
+import { join } from "node:path";
+import { dial } from "../server/listen.ts";
 import { VERSION } from "../version.ts";
-import { findDaemon } from "./daemon-registry.ts";
+import { compareVersions, findDaemon } from "./daemon-registry.ts";
 import { proxyEnabled } from "./proxy-mode.ts";
-import { ensureDaemon, isProcessAlive, shouldBypassDaemon } from "./queue.ts";
+import { ensureDaemon, isProcessAlive, runtimeRoot, shouldBypassDaemon } from "./queue.ts";
 import { readUiDescriptor, type UiDescriptor, type UiListenRequest } from "./ui-host.ts";
 
 /**
@@ -21,6 +24,8 @@ export interface DaemonListener {
   port: number;
   /** Detached listener that was already running for this project. */
   reused: boolean;
+  /** Detached only: the idle grace in force in ms (0 = until stopped); undefined from an older daemon. */
+  idleMs: number | undefined;
   /** Settles when the daemon side of the connection ends. */
   closed: Promise<ListenerEnd>;
   /** Releases the listener: the daemon frees the port. */
@@ -110,7 +115,7 @@ export async function requestDaemonListener(
       `${JSON.stringify({
         knowns_ui: 1,
         type: "listen",
-        version: VERSION,
+        version: desc?.version ?? VERSION,
         token: desc?.token,
         pid: process.pid,
         ...req,
@@ -132,6 +137,7 @@ export async function requestDaemonListener(
     listener: {
       port: reply.port,
       reused: reply.reused === true,
+      idleMs: typeof reply.idleMs === "number" ? reply.idleMs : undefined,
       closed,
       release: () => {
         end = "released";
@@ -168,7 +174,7 @@ export async function stopDaemonListeners(
     sock.once("close", () => done(undefined));
     sock.once("connect", () =>
       sock.write(
-        `${JSON.stringify({ knowns_ui: 1, type: "stop", version: VERSION, token: desc.token, ...target })}\n`,
+        `${JSON.stringify({ knowns_ui: 1, type: "stop", version: desc.version, token: desc.token, ...target })}\n`,
       ),
     );
     sock.on("data", (chunk) => {
@@ -183,4 +189,72 @@ export async function stopDaemonListeners(
       }
     });
   });
+}
+
+/** The UI endpoints of live daemons of OLDER versions (an upgrade leaves them running). */
+export function olderUiDescriptors(root: string = runtimeRoot()): UiDescriptor[] {
+  let names: string[];
+  try {
+    names = readdirSync(join(root, "ui"));
+  } catch {
+    return [];
+  }
+  const out: UiDescriptor[] = [];
+  for (const n of names) {
+    const m = /^control-(.+)\.json$/.exec(n);
+    if (!m) continue;
+    const d = readUiDescriptor(m[1] as string, root);
+    if (!d || compareVersions(d.version, VERSION) >= 0 || !isProcessAlive(d.pid)) continue;
+    out.push(d);
+  }
+  return out;
+}
+
+/** True when a Knowns UI answering on `port` asks for a password. Anything else is false. */
+async function protectedUi(port: number): Promise<boolean> {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/auth/status`, {
+      signal: AbortSignal.timeout(1000),
+    });
+    const j = (await res.json()) as { protected?: unknown };
+    return j.protected === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * After an upgrade the previous version's daemon still holds the UI port of this project, so a new
+ * `knowns browser` would move to the next port and the open tab would keep the old UI. Stops the
+ * detached and leased UI listeners OF THIS PROJECT in older daemons (each daemon answers for its
+ * own listeners only, and only the project asked for), waits for their ports to free, and returns
+ * them so the caller can serve on the same port. Returns [] when there is nothing to take over,
+ * or when an older UI in the port range is password-protected and the new one would not be: a
+ * takeover must never silently drop the password.
+ */
+export async function takeOverOlderListeners(
+  target: { projectRoot: string; port: number; password: string },
+  opts: { root?: string; replyMs?: number; range?: number } = {},
+): Promise<number[]> {
+  if (target.projectRoot === "") return [];
+  const olds = olderUiDescriptors(opts.root);
+  if (olds.length === 0) return [];
+  if (target.password === "") {
+    for (let i = 0; i < (opts.range ?? 10); i++) {
+      if (await protectedUi(target.port + i)) return [];
+    }
+  }
+  const ports: number[] = [];
+  for (const d of olds) {
+    const stopped = await stopDaemonListeners(
+      { projectRoot: target.projectRoot },
+      { descriptor: d, ...(opts.replyMs !== undefined && { replyMs: opts.replyMs }) },
+    );
+    if (stopped) ports.push(...stopped);
+  }
+  const deadline = Date.now() + 5_000;
+  for (const p of ports) {
+    while (Date.now() < deadline && (await dial("127.0.0.1", p, 200))) await sleep(50);
+  }
+  return ports;
 }
