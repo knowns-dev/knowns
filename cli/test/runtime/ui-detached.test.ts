@@ -8,6 +8,7 @@ import { join } from "node:path";
 import {
   requestDaemonListener,
   stopDaemonListeners,
+  stopListenersOfAnyVersion,
   takeOverOlderListeners,
 } from "../../src/runtime/ui-client.ts";
 import { DEFAULT_UI_IDLE_MS, parseUiIdleEnv, UiHost, uiIdleMs } from "../../src/runtime/ui-host.ts";
@@ -264,6 +265,27 @@ describe("upgrade takeover (KN-ZV8WGG)", () => {
     expect(await dial("127.0.0.1", old.listener.port, 200)).toBe(false);
     // Another project's UI is left alone.
     expect(await dial("127.0.0.1", other.listener.port, 200)).toBe(true);
+    await oldHost.stop();
+  });
+
+  test("--stop reaches a listener of an older version by port or by project", async () => {
+    const { root, oldHost, oldD } = await twoVersions();
+    const mkOld = async (projectRoot: string) => {
+      const o = await requestDaemonListener(
+        req({ port: await freePort(), idleMs: 60_000, projectRoot }),
+        { descriptor: oldD },
+      );
+      if (!o.ok) throw new Error(o.reason);
+      return o.listener.port;
+    };
+    const byPort = await mkOld("/p/one");
+    expect(await stopListenersOfAnyVersion({ port: byPort }, { root })).toEqual([byPort]);
+    expect(await dial("127.0.0.1", byPort, 200)).toBe(false);
+    const byProject = await mkOld("/p/two");
+    expect(await stopListenersOfAnyVersion({ projectRoot: "/p/two" }, { root })).toEqual([
+      byProject,
+    ]);
+    expect(await dial("127.0.0.1", byProject, 200)).toBe(false);
     await oldHost.stop();
   });
 

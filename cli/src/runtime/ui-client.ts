@@ -258,3 +258,24 @@ export async function takeOverOlderListeners(
   }
   return ports;
 }
+
+/**
+ * `knowns browser --stop`: the listeners of this version's daemon AND of older daemons an upgrade
+ * left running, so the UI on a port stops whichever version serves it (KN-ZV8WGG). Returns the
+ * ports stopped, or undefined when no daemon answered at all.
+ */
+export async function stopListenersOfAnyVersion(
+  target: { port?: number; projectRoot?: string },
+  opts: { root?: string; replyMs?: number } = {},
+): Promise<number[] | undefined> {
+  const ro = opts.replyMs !== undefined ? { replyMs: opts.replyMs } : {};
+  const own = await stopDaemonListeners(target, ro);
+  let answered = own !== undefined;
+  const ports = [...(own ?? [])];
+  for (const d of olderUiDescriptors(opts.root)) {
+    const stopped = await stopDaemonListeners(target, { descriptor: d, ...ro });
+    if (stopped !== undefined) answered = true;
+    ports.push(...(stopped ?? []));
+  }
+  return answered ? [...new Set(ports)] : undefined;
+}

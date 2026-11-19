@@ -70,20 +70,25 @@ async function waitForHTTPServer(port: number, timeoutMs: number): Promise<boole
 
 /** stopExistingServer: POST /api/shutdown, then wait (up to ~3s) for the port to free up. */
 async function stopExistingServer(ctx: CommandContext, port: number): Promise<boolean> {
+  // Nothing answers: nothing to stop. Otherwise a failed POST is not "no server": a UI of another
+  // version (KN-ZV8WGG) may drop the connection while it shuts down, and the wait below tells.
+  if (!(await dial("127.0.0.1", port, 500))) {
+    ctx.print(`${StyleDim.render("No existing server found.")}\n`);
+    return false;
+  }
   try {
-    const res = await fetch(`http://localhost:${port}/api/shutdown`, {
+    const res = await fetch(`http://127.0.0.1:${port}/api/shutdown`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: AbortSignal.timeout(2000),
     });
     await res.arrayBuffer().catch(() => undefined);
   } catch {
-    ctx.print(`${StyleDim.render("No existing server found.")}\n`);
-    return false;
+    // the connection may close with the server; the port tells whether it stopped
   }
   ctx.print(`${StyleWarning.render("Existing server detected.")} Waiting for shutdown...\n`);
   for (let i = 0; i < 10; i++) {
-    if (!(await dial("localhost", port, 200))) {
+    if (!(await dial("127.0.0.1", port, 200))) {
       ctx.print(`${StyleSuccess.render("Previous server stopped.")}\n`);
       return true;
     }
@@ -363,8 +368,8 @@ export default defineCommand({
     if (port === 0) port = DEFAULT_BROWSER_PORT;
 
     if (stopFlag) {
-      const { stopDaemonListeners } = await import("../../runtime/ui-client.ts");
-      const ports = await stopDaemonListeners(
+      const { stopListenersOfAnyVersion } = await import("../../runtime/ui-client.ts");
+      const ports = await stopListenersOfAnyVersion(
         portGiven ? { port } : projectRoot !== "" ? { projectRoot } : { port },
       );
       if (ports && ports.length > 0) {
