@@ -52,7 +52,13 @@ import { readFileRetrying } from "../../storage/core/fs-retry.ts";
 import { globalSemanticStoreRoot } from "../../storage/core/store.ts";
 import { withTaskLifecycleTransaction } from "../../storage/history/lifecycle-tx.ts";
 import { JobCancelledError } from "../job-cancel.ts";
-import { goLogf, isProcessAlive, parseGoDurationMs, sleep } from "../queue.ts";
+import {
+  clearOwnershipMismatchJobs,
+  goLogf,
+  isProcessAlive,
+  parseGoDurationMs,
+  sleep,
+} from "../queue.ts";
 import { IndexService, type ReindexProgress } from "./index-service.ts";
 import { stampWatermarksFromGeneration } from "./qdrant-intent.ts";
 
@@ -186,6 +192,67 @@ function generationRecord(
   } as QdrantGenerationRecord;
 }
 
+/**
+ * The collections that the active pointer of ANOTHER registered project names, or undefined when
+ * the registry cannot be read (then nothing is provable). A copied project folder keeps the old
+ * generations list, so a collection another project still serves must never be treated as ours.
+ */
+async function collectionsServedByOtherProjects(
+  storeRoot: string,
+): Promise<Set<string> | undefined> {
+  try {
+    const { Registry } = await import("../../storage/stores/registry.ts");
+    const { locateProjectAt } = await import("../../storage/core/index.ts");
+    const reg = new Registry();
+    reg.load();
+    const served = new Set<string>();
+    for (const p of reg.list()) {
+      let root: string;
+      try {
+        root = locateProjectAt(p.path).knowledgeRoot;
+      } catch {
+        root = join(p.path, ".knowns");
+      }
+      if (storeRootFingerprint(root) === storeRootFingerprint(storeRoot)) continue;
+      try {
+        const ptr = loadQdrantPointer(root);
+        if (ptr) served.add(ptr.collectionName);
+      } catch {
+        // an unreadable pointer of another project names nothing we could delete by mistake
+      }
+    }
+    return served;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Cleanup of generations built under the path this project had before it moved. They carry the old
+ * store-root fingerprint, so the exact-owner rule refuses them and their collections leak. The
+ * proof that they are ours: the record sits in THIS store's qdrant-generations.jsonl, names the
+ * same projectId as the active pointer (which is owned by this path, so a rebuild has already taken
+ * over), is not the active collection, and no other registered project serves that collection
+ * (a copied folder would share the record but the original still serves the collection).
+ */
+function movedOwnerProof(
+  r: QdrantGenerationRecord,
+  active: QdrantPointer,
+  storeRoot: string,
+  servedElsewhere: Set<string> | undefined,
+): boolean {
+  const projectId = active.owner.projectId ?? "";
+  return (
+    servedElsewhere !== undefined &&
+    projectId !== "" &&
+    active.owner.storeRootFingerprint === storeRootFingerprint(storeRoot) &&
+    r.owner.projectId === projectId &&
+    !!r.owner.storeRootFingerprint &&
+    r.collectionName !== active.collectionName &&
+    !servedElsewhere.has(r.collectionName)
+  );
+}
+
 /** CleanupQdrantGenerations: hard count cap first, then TTL, only for exactly owned records. */
 export async function cleanupQdrantGenerations(
   storeRoot: string,
@@ -214,10 +281,19 @@ export async function cleanupQdrantGenerations(
   const inactive = [...byName.values()].sort((a, b) => b.generation - a.generation);
   const deleted: string[] = [];
   const errors: Error[] = [];
+  let servedElsewhere: Set<string> | undefined;
+  let servedLoaded = false;
   for (const [i, r] of inactive.entries()) {
-    const owned =
+    let owned =
       r.owner.storeRootFingerprint === active.owner.storeRootFingerprint &&
       r.owner.storeRootFingerprint === storeRootFingerprint(storeRoot);
+    if (!owned && r.owner.storeRootFingerprint !== active.owner.storeRootFingerprint) {
+      if (!servedLoaded) {
+        servedElsewhere = await collectionsServedByOtherProjects(storeRoot);
+        servedLoaded = true;
+      }
+      owned = movedOwnerProof(r, active, storeRoot, servedElsewhere);
+    }
     if (!owned) {
       errors.push(
         new Error(`qdrant cleanup refused for ${r.collectionName}: ownership proof mismatch`),
@@ -429,6 +505,12 @@ async function reindexLocked(
       throw new Error(`activate next Qdrant generation: ${(err as Error).message}`);
     }
     activated = true;
+    // A rebuild after a move takes the pointer over: the jobs that failed on the old owner are moot.
+    try {
+      clearOwnershipMismatchJobs(storeRoot);
+    } catch (err) {
+      goLogf(`[search] could not clear stale ownership-mismatch jobs: ${(err as Error).message}`);
+    }
 
     const indexedSourceIds = new Set<string>();
     for (const p of points) {

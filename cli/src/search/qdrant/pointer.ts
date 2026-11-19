@@ -91,6 +91,29 @@ export function goClean(p: string): string {
   return n;
 }
 
+/** The start of every ownership-mismatch message; the queue recognises a parked job by it. */
+export const QDRANT_OWNERSHIP_MISMATCH = "qdrant active pointer ownership mismatch";
+
+/**
+ * The pointer was written for another store path: the project folder was moved or renamed (or the
+ * pointer was copied in). Reconciling one change at a time cannot fix it, only a rebuild takes the
+ * pointer over, so the message names that fix once and the queue parks the jobs instead of retrying.
+ */
+export class QdrantOwnershipMismatchError extends Error {
+  readonly code = "qdrant_ownership_mismatch";
+  constructor() {
+    super(
+      `${QDRANT_OWNERSHIP_MISMATCH}: the project folder was moved or renamed since its semantic index was built; ` +
+        `rebuild it with "knowns search index --wait" (edits are not synced to Qdrant until then)`,
+    );
+    this.name = "QdrantOwnershipMismatchError";
+  }
+}
+
+export function isQdrantOwnershipMismatch(message: string | undefined): boolean {
+  return message !== undefined && message.startsWith(QDRANT_OWNERSHIP_MISMATCH);
+}
+
 /** "sha256:" + hex of the cleaned store root; a copied pointer from another store never matches. */
 export function storeRootFingerprint(storeRoot: string): string {
   return `sha256:${contentHash(goClean(storeRoot))}`;
