@@ -110,10 +110,10 @@ describe("a moved project's reconcile jobs", () => {
 
 describe("cleaning up generations of the previous path", () => {
   /** A store whose active pointer is new and whose history holds generations built at `oldRoot`. */
-  function moved(name: string, projectId = "Macss-App") {
+  function moved(name: string, projectId = "Macss-App", oldRoot = `/old/path/${name}/.knowns`) {
     const root = storeAt(name);
-    const old = newQdrantPointer(`/old/path/${name}/.knowns`, projectId, emb);
-    const older = newQdrantPointer(`/old/path/${name}/.knowns`, projectId, emb);
+    const old = newQdrantPointer(oldRoot, projectId, emb);
+    const older = newQdrantPointer(oldRoot, projectId, emb);
     const active = newQdrantPointer(root, projectId, emb);
     const rec = (p: typeof old, generation: number, status: string): QdrantGenerationRecord =>
       ({
@@ -197,6 +197,26 @@ describe("cleaning up generations of the previous path", () => {
     const { client, deleted } = fakeClient();
     await cleanupQdrantGenerations(root, client, active, 0, 1000, far);
     expect(deleted).not.toContain(old.collectionName);
+  });
+
+  test("a copy whose original is known only to the runtime (never registered) is refused", async () => {
+    const original = storeAt("never-registered");
+    const { root, active, old } = moved("copy-of-unregistered", "Macss-App", original);
+    mkdirSync(q.runtimeRoot(), { recursive: true });
+    writeFileSync(join(q.runtimeRoot(), "projects.json"), JSON.stringify([original, root]));
+    const { client, deleted } = fakeClient();
+    await cleanupQdrantGenerations(root, client, active, 0, 1000, far);
+    expect(deleted).not.toContain(old.collectionName);
+  });
+
+  test("a move: the old path is still in the runtime list but its folder is gone, so it is deleted", async () => {
+    const gone = join(home, "gone-after-move", ".knowns");
+    const { root, active, old } = moved("really-moved", "Macss-App", gone);
+    mkdirSync(q.runtimeRoot(), { recursive: true });
+    writeFileSync(join(q.runtimeRoot(), "projects.json"), JSON.stringify([gone, root]));
+    const { client, deleted } = fakeClient();
+    await cleanupQdrantGenerations(root, client, active, 0, 1000, far);
+    expect(deleted).toContain(old.collectionName);
   });
 
   test("without an active pointer owned by this path nothing is deleted", async () => {

@@ -192,36 +192,55 @@ function generationRecord(
   } as QdrantGenerationRecord;
 }
 
+/** What the other stores on this machine say about the collections of a generations history. */
+interface OtherStores {
+  /** Collections the active pointer of another live store names. */
+  served: Set<string>;
+  /** Store-root fingerprints of other stores that still exist on disk. */
+  livePrints: Set<string>;
+}
+
 /**
- * The collections that the active pointer of ANOTHER registered project names, or undefined when
- * the registry cannot be read (then nothing is provable). A copied project folder keeps the old
- * generations list, so a collection another project still serves must never be treated as ours.
+ * The other stores this machine knows: the project registry and the runtime's project list, each
+ * counted only while its folder still exists. A copied project keeps the old generations list, but
+ * its original is a live store whose fingerprint is the old owner and whose pointer still serves the
+ * collection; a moved project has no such store left. Undefined when either list cannot be read
+ * (then nothing is provable).
  */
-async function collectionsServedByOtherProjects(
-  storeRoot: string,
-): Promise<Set<string> | undefined> {
+async function otherLiveStores(storeRoot: string): Promise<OtherStores | undefined> {
   try {
     const { Registry } = await import("../../storage/stores/registry.ts");
     const { locateProjectAt } = await import("../../storage/core/index.ts");
+    const { registeredProjects } = await import("../queue.ts");
     const reg = new Registry();
     reg.load();
-    const served = new Set<string>();
+    const roots: string[] = [...registeredProjects()];
     for (const p of reg.list()) {
-      let root: string;
       try {
-        root = locateProjectAt(p.path).knowledgeRoot;
+        roots.push(locateProjectAt(p.path).knowledgeRoot);
       } catch {
-        root = join(p.path, ".knowns");
-      }
-      if (storeRootFingerprint(root) === storeRootFingerprint(storeRoot)) continue;
-      try {
-        const ptr = loadQdrantPointer(root);
-        if (ptr) served.add(ptr.collectionName);
-      } catch {
-        // an unreadable pointer of another project names nothing we could delete by mistake
+        roots.push(join(p.path, ".knowns"));
       }
     }
-    return served;
+    const me = storeRootFingerprint(storeRoot);
+    const out: OtherStores = { served: new Set(), livePrints: new Set() };
+    for (const root of roots) {
+      const fp = storeRootFingerprint(root);
+      if (fp === me) continue;
+      try {
+        if (!statSync(root).isDirectory()) continue;
+      } catch {
+        continue; // the folder is gone: a moved project's old path
+      }
+      out.livePrints.add(fp);
+      try {
+        const ptr = loadQdrantPointer(root);
+        if (ptr) out.served.add(ptr.collectionName);
+      } catch {
+        // an unreadable pointer of another store names nothing we could delete by mistake
+      }
+    }
+    return out;
   } catch {
     return undefined;
   }
@@ -232,24 +251,27 @@ async function collectionsServedByOtherProjects(
  * store-root fingerprint, so the exact-owner rule refuses them and their collections leak. The
  * proof that they are ours: the record sits in THIS store's qdrant-generations.jsonl, names the
  * same projectId as the active pointer (which is owned by this path, so a rebuild has already taken
- * over), is not the active collection, and no other registered project serves that collection
- * (a copied folder would share the record but the original still serves the collection).
+ * over), is not the active collection, no live store on this machine has the record's owner
+ * fingerprint (the old path is gone, so this is a move and not a copy), and no other live store
+ * serves that collection.
  */
 function movedOwnerProof(
   r: QdrantGenerationRecord,
   active: QdrantPointer,
   storeRoot: string,
-  servedElsewhere: Set<string> | undefined,
+  others: OtherStores | undefined,
 ): boolean {
   const projectId = active.owner.projectId ?? "";
+  const fp = r.owner.storeRootFingerprint ?? "";
   return (
-    servedElsewhere !== undefined &&
+    others !== undefined &&
     projectId !== "" &&
     active.owner.storeRootFingerprint === storeRootFingerprint(storeRoot) &&
     r.owner.projectId === projectId &&
-    !!r.owner.storeRootFingerprint &&
+    fp !== "" &&
     r.collectionName !== active.collectionName &&
-    !servedElsewhere.has(r.collectionName)
+    !others.livePrints.has(fp) &&
+    !others.served.has(r.collectionName)
   );
 }
 
@@ -281,18 +303,18 @@ export async function cleanupQdrantGenerations(
   const inactive = [...byName.values()].sort((a, b) => b.generation - a.generation);
   const deleted: string[] = [];
   const errors: Error[] = [];
-  let servedElsewhere: Set<string> | undefined;
-  let servedLoaded = false;
+  let others: OtherStores | undefined;
+  let othersLoaded = false;
   for (const [i, r] of inactive.entries()) {
     let owned =
       r.owner.storeRootFingerprint === active.owner.storeRootFingerprint &&
       r.owner.storeRootFingerprint === storeRootFingerprint(storeRoot);
     if (!owned && r.owner.storeRootFingerprint !== active.owner.storeRootFingerprint) {
-      if (!servedLoaded) {
-        servedElsewhere = await collectionsServedByOtherProjects(storeRoot);
-        servedLoaded = true;
+      if (!othersLoaded) {
+        others = await otherLiveStores(storeRoot);
+        othersLoaded = true;
       }
-      owned = movedOwnerProof(r, active, storeRoot, servedElsewhere);
+      owned = movedOwnerProof(r, active, storeRoot, others);
     }
     if (!owned) {
       errors.push(

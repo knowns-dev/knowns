@@ -3,6 +3,6 @@
 export function withoutD9(stdout: string): string {
   return stdout
     .split("\n")
-    .filter((l) => !/^--(foreground|stop)(\t|$)/.test(l))
+    .filter((l) => !/^--(foreground|keep-alive|stop)(\t|$)/.test(l))
     .join("\n");
 }
