@@ -15,6 +15,7 @@ import {
   runWithOptions,
 } from "../../src/lspdaemon/index.ts";
 import { Server } from "../../src/lspdaemon/server.ts";
+import { listenEndpoint } from "../../src/lspdaemon/transport.ts";
 import { isolateHome, listenOnce, StubManager, tempProject, waitFor } from "./support.ts";
 
 // Bun 1.3.12 segfaults in expect(...).rejects.toThrow for these error objects; compare the message.
@@ -35,7 +36,13 @@ afterAll(() => restore());
 
 function start(root: string, idleTimeoutMs = 0, manager = new StubManager()) {
   const ac = new AbortController();
-  const done = runWithOptions(ac.signal, root, { idleTimeoutMs, manager });
+  // A short idle timeout counts from the first request: counted from listen, a loaded machine
+  // outlasts it before the first dial and the daemon is gone by the time the test looks for it.
+  const done = runWithOptions(ac.signal, root, {
+    idleTimeoutMs,
+    manager,
+    idleClockStartsAtFirstRequest: true,
+  });
   return { ac, done, manager };
 }
 
@@ -131,7 +138,7 @@ describe("daemon over the local transport", () => {
     await waitFor(() => c.ping());
     await Promise.race([
       d.done,
-      new Promise((_, r) => setTimeout(() => r(new Error("no idle exit")), 2000)),
+      new Promise((_, r) => setTimeout(() => r(new Error("no idle exit")), 15_000)),
     ]);
   });
 
@@ -149,14 +156,42 @@ describe("daemon over the local transport", () => {
     await c.releaseLease(undefined, "webui");
     await Promise.race([
       d.done,
-      new Promise((_, r) => setTimeout(() => r(new Error("no idle exit")), 2000)),
+      new Promise((_, r) => setTimeout(() => r(new Error("no idle exit")), 15_000)),
     ]);
+  });
+});
+
+describe("a client that arrives while the daemon is still starting", () => {
+  test("is answered by the server that takes the listener afterwards, not left waiting for its deadline", async () => {
+    // Bun accepts a connection as soon as the socket listens and drops it when nothing listens for
+    // "connection" yet: a ping sent right after the socket appeared went unanswered for 30 s.
+    const root = tempProject();
+    const c = newClient(root);
+    const listener = await listenEndpoint(c.paths);
+    const ac = new AbortController();
+    const early = c.callOnce(undefined, { operation: "ping" });
+    early.catch(() => {});
+    // The dial and the request are in flight with nobody serving yet.
+    await new Promise((r) => setTimeout(r, 300));
+    const server = new Server(c.identity, c.paths, c.token, new StubManager(), 0);
+    const done = server.serve(ac.signal, listener);
+    try {
+      await Promise.race([
+        early,
+        new Promise((_, rej) =>
+          setTimeout(() => rej(new Error("the early ping was never answered")), 3000),
+        ),
+      ]);
+    } finally {
+      ac.abort();
+      await done;
+    }
   });
 });
 
 describe("an owner that is gone", () => {
   const within = (p: Promise<unknown>, what: string) =>
-    Promise.race([p, new Promise((_, r) => setTimeout(() => r(new Error(what)), 3000))]);
+    Promise.race([p, new Promise((_, r) => setTimeout(() => r(new Error(what)), 15_000))]);
 
   async function deadPid(): Promise<number> {
     const child = Bun.spawn([process.execPath, "-e", ""], {

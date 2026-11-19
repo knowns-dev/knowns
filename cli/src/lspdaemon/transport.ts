@@ -113,6 +113,7 @@ export async function listenEndpoint(paths: Paths): Promise<net.Server> {
     throw new Error(`LSP daemon socket already active: ${ep.address}`);
   }
   const server = net.createServer();
+  holdEarlyConnections(server);
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen({ path: ep.address }, () => {
@@ -130,6 +131,58 @@ export async function listenEndpoint(paths: Paths): Promise<net.Server> {
     });
   });
   return server;
+}
+
+interface EarlyConnection {
+  conn: net.Socket;
+  /** Call once the real handler has attached its listeners: hands over what arrived meanwhile. */
+  replay: () => void;
+}
+
+const early = new WeakMap<net.Server, { held: EarlyConnection[]; hold: (s: net.Socket) => void }>();
+
+/**
+ * Bun accepts a connection the moment the socket listens and emits "connection" at once, and a
+ * socket with no "data" listener loses what the peer sends. With the server not yet attached, a
+ * client dialling right after the socket file appeared (a test, or ensureClient waiting for a
+ * daemon it just started) had its connection dropped and its request lost, and waited its whole
+ * 30 s deadline for a reply. The holder keeps each such socket and its bytes until the server
+ * takes them with takeEarlyConnections.
+ */
+function holdEarlyConnections(server: net.Server): void {
+  const entry = {
+    held: [] as EarlyConnection[],
+    hold: (conn: net.Socket) => {
+      const chunks: Buffer[] = [];
+      let ended = false;
+      const onData = (d: Buffer) => chunks.push(d);
+      const onEnd = () => {
+        ended = true;
+      };
+      conn.on("data", onData);
+      conn.on("end", onEnd);
+      entry.held.push({
+        conn,
+        replay: () => {
+          conn.off("data", onData);
+          conn.off("end", onEnd);
+          for (const c of chunks) conn.emit("data", c);
+          if (ended) conn.emit("end");
+        },
+      });
+    },
+  };
+  early.set(server, entry);
+  server.on("connection", entry.hold);
+}
+
+/** Stops holding and returns the connections accepted before the real handler was attached. */
+export function takeEarlyConnections(server: net.Server): EarlyConnection[] {
+  const entry = early.get(server);
+  if (entry === undefined) return [];
+  early.delete(server);
+  server.off("connection", entry.hold);
+  return entry.held;
 }
 
 export function cleanupEndpoint(paths: Paths): void {
