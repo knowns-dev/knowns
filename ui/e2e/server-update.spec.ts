@@ -16,8 +16,9 @@ test.describe("Server update notice (KN-ZV8WGG)", () => {
 
 	test("a reconnect to a server of another version shows 'Knowns was updated' with Reload; the same version shows nothing", async ({ page }) => {
 		// The event stream ends after each `connected` and the browser reconnects; each connect makes the
-		// page ask the version, and the third answer is a newer server.
-		const versions = ["0.36.1", "0.36.1", "0.36.2"];
+		// page ask the version. The server stays on 0.36.1 until the test upgrades it, so a fast reconnect
+		// loop cannot reach the newer version before the "nothing yet" check.
+		let upgraded = false;
 		let connects = 0;
 		let asked = 0;
 		await page.route("**/api/events*", async (route) => {
@@ -29,7 +30,8 @@ test.describe("Server update notice (KN-ZV8WGG)", () => {
 			});
 		});
 		await page.route("**/api/version", async (route) => {
-			const version = versions[Math.min(asked++, versions.length - 1)];
+			asked++;
+			const version = upgraded ? "0.36.2" : "0.36.1";
 			await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ version }) });
 		});
 		await page.goto(server.baseURL);
@@ -38,7 +40,8 @@ test.describe("Server update notice (KN-ZV8WGG)", () => {
 		await expect.poll(() => asked, { timeout: 10_000 }).toBeGreaterThanOrEqual(2);
 		void connects;
 		await expect(notice).toHaveCount(0);
-		// the third reports 0.36.2
+		// the next connection reports 0.36.2
+		upgraded = true;
 		await expect(notice).toBeVisible({ timeout: 10_000 });
 		await expect(notice).toContainText("Knowns was updated to v0.36.2");
 		await expect(notice.getByRole("button", { name: "Reload" })).toBeVisible();
