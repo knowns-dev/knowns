@@ -202,11 +202,14 @@ describe("an owner that is gone", () => {
   }
 
   test("its lease no longer keeps the daemon alive", async () => {
+    // Spawn the dead process first: on a cold Windows runner it outlasts the 100 ms idle clock
+    // and the daemon would exit before the lease reached it.
+    const gone = await deadPid();
     const root = tempProject();
     const d = start(root, 100);
     const c = newClient(root);
     await waitFor(() => c.ping());
-    await c.acquireLease(undefined, "webui", 60_000, await deadPid());
+    await c.acquireLease(undefined, "webui", 60_000, gone);
     await within(d.done, "a lease held by a dead process kept the daemon alive");
   });
 
