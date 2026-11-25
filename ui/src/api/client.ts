@@ -266,6 +266,16 @@ export const operationsApi = {
 		const res = await apiFetch(`${API_BASE}/api/operations/${encodeURIComponent(id)}/dismiss`, { method: "POST" });
 		if (!res.ok && res.status !== 404) throw new OperationAPIError(`Could not dismiss (${res.status})`, res.status);
 	},
+	/** Every finished row (of one project when given); the server remembers it across restarts. */
+	async dismissFinished(projectRoot?: string | null): Promise<string[]> {
+		const res = await apiFetch(`${API_BASE}/api/operations/dismiss-finished`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(projectRoot ? { projectRoot } : {}),
+		});
+		if (!res.ok) throw new OperationAPIError(`Could not dismiss (${res.status})`, res.status);
+		return ((await res.json()) as { ids?: string[] }).ids ?? [];
+	},
 };
 
 async function lifecycleFetch(

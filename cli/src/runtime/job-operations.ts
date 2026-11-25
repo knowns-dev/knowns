@@ -63,7 +63,32 @@ const progressOf = (j: { processed?: number; total?: number; details?: unknown }
   return total > 0 ? { done: Math.min(done, total), total } : null;
 };
 
-function jobOperation(root: string, job: Job, cancelling: boolean): Operation {
+/** What a dead-lettered job's runAfter adds to the moment it died (see queue.ts, the dead-letter copy). */
+const DEAD_LETTER_HOLD_MS = 24 * 3_600_000;
+
+/**
+ * When a dead-lettered job failed: its result in `recent` if that is still kept, else the moment
+ * its hold started (runAfter minus the hold), else when it was requested.
+ */
+function deadAt(job: Job, recent: JobResult[] | undefined): number {
+  const r = recent?.find((x) => x.jobId === job.id);
+  if (r) return ms(r.completedAt);
+  const hold = Date.parse(job.runAfter);
+  const requested = ms(job.requestedAt);
+  return Number.isFinite(hold) ? Math.max(requested, hold - DEAD_LETTER_HOLD_MS) : requested;
+}
+
+/** A failure that a later run of the same job key (kind and target) answered with a success. */
+function superseded(job: Job, failedAt: number, recent: JobResult[] | undefined): boolean {
+  return (recent ?? []).some((r) => r.success && r.key === job.key && ms(r.completedAt) > failedAt);
+}
+
+function jobOperation(
+  root: string,
+  job: Job,
+  cancelling: boolean,
+  recent?: JobResult[],
+): Operation {
   const running = !!job.startedAt;
   const dead = job.deadLetter === true;
   let state: OperationState = running ? "running" : "queued";
@@ -84,7 +109,7 @@ function jobOperation(root: string, job: Job, cancelling: boolean): Operation {
     message: job.phase && running ? job.phase : null,
     startedAt: ms(job.startedAt ?? job.requestedAt),
     updatedAt: Date.now(),
-    finishedAt: null,
+    finishedAt: dead ? deadAt(job, recent) : null,
   };
 }
 
@@ -113,6 +138,17 @@ function resultOperation(root: string, r: JobResult): Operation {
 
 const KNOWN = (j: Job): boolean => typeof j.kind === "string" && j.kind in TITLES;
 
+/** Known jobs of a queue as operations; a failure a later success of the same job key answered is left out. */
+function queueOperations(root: string, q: { jobs: Job[]; recent?: JobResult[] }): Operation[] {
+  const out: Operation[] = [];
+  for (const j of q.jobs) {
+    if (!KNOWN(j)) continue;
+    if (j.deadLetter && superseded(j, deadAt(j, q.recent), q.recent)) continue;
+    out.push(jobOperation(root, j, cancelRequested(j.id), q.recent));
+  }
+  return out;
+}
+
 function readProjects(): string[] {
   try {
     return registeredProjects();
@@ -125,13 +161,11 @@ function readProjects(): string[] {
 export function listJobOperations(projects: string[] = readProjects()): Operation[] {
   const out: Operation[] = [];
   for (const root of projects) {
-    let jobs: Job[];
     try {
-      jobs = loadQueueCached(root).jobs;
+      out.push(...queueOperations(root, loadQueueCached(root)));
     } catch {
-      continue;
+      // an unreadable queue lists nothing
     }
-    for (const j of jobs) if (KNOWN(j)) out.push(jobOperation(root, j, cancelRequested(j.id)));
   }
   return out;
 }
@@ -199,9 +233,7 @@ export function observeJobs(projects: string[] = readProjects()): void {
   for (const root of projects) {
     try {
       const q = loadQueueCached(root);
-      for (const j of q.jobs) {
-        if (KNOWN(j)) now.set(`job:${j.id}`, jobOperation(root, j, cancelRequested(j.id)));
-      }
+      for (const op of queueOperations(root, q)) now.set(op.id, op);
       for (const r of q.recent ?? []) results.push({ root, r });
     } catch {
       // an unreadable queue reports nothing

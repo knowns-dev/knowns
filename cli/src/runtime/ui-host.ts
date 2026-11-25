@@ -12,7 +12,8 @@
 // D9: a listen frame with "mode":"detached" (and optional "idleMs") hands the listener to the
 // daemon for good: the reply carries "reused":true when a detached listener of the same project
 // already runs, and the connection is closed right after it. The listener lives while a tab holds
-// an SSE connection and ends idleMs (default 30 min, KNOWNS_UI_IDLE_MS) after the last one leaves.
+// an SSE connection and ends idleMs (default 30 min, KNOWNS_UI_IDLE_MS) after the last one leaves;
+// idleMs 0 (KNOWNS_UI_IDLE_MS=0, --keep-alive) never ends it: it lives until `browser --stop`.
 //   client -> daemon  {"knowns_ui":1,"type":"stop","version","token","port"?,"projectRoot"?}
 //   daemon -> client  {"knowns_ui":1,"type":"stopped","ports":[N,...]}
 //                  later {"knowns_ui":1,"type":"bye","reason":"shutdown"} just before closing
@@ -71,14 +72,27 @@ export interface UiListenRequest {
 
 export const DEFAULT_UI_IDLE_MS = 30 * 60_000;
 
-/** The idle grace: the request's, else KNOWNS_UI_IDLE_MS of the daemon, else 30 minutes. */
+/**
+ * KNOWNS_UI_IDLE_MS: a positive number of ms is the grace, 0 means "never close by itself" (keep
+ * alive), anything else (unset, negative, not a number) is undefined and leaves the default.
+ */
+export function parseUiIdleEnv(env: Record<string, string | undefined>): number | undefined {
+  const raw = env.KNOWNS_UI_IDLE_MS;
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+/**
+ * The idle grace in ms: the request's, else KNOWNS_UI_IDLE_MS of the daemon, else 30 minutes.
+ * 0 means the listener never closes for lack of tabs; it lives until it is stopped.
+ */
 export function uiIdleMs(
   requested: number | undefined,
   env: Record<string, string | undefined> = process.env,
 ): number {
-  if (requested !== undefined && Number.isFinite(requested) && requested > 0) return requested;
-  const n = Number(env.KNOWNS_UI_IDLE_MS);
-  return Number.isFinite(n) && n > 0 ? n : DEFAULT_UI_IDLE_MS;
+  if (requested !== undefined && Number.isFinite(requested) && requested >= 0) return requested;
+  return parseUiIdleEnv(env) ?? DEFAULT_UI_IDLE_MS;
 }
 
 export interface UiListenerInfo {
@@ -155,6 +169,10 @@ interface Live {
   key: string;
   stop(reason: string): void;
   done: Promise<void>;
+  /** Detached only: the idle grace in ms now in force (0 = never). */
+  idleMs(): number;
+  /** Detached only: changes the grace of a running listener (a later `--keep-alive`). */
+  setIdleMs(ms: number): void;
 }
 
 export interface UiHostOptions {
@@ -368,7 +386,18 @@ export class UiHost {
       for (const l of this.live.values()) {
         if (l.info.detached && l.key === key) {
           this.log(`[ui-host] ${l.info.id} reused on ${l.info.port}`);
-          sock.end(frame({ type: "listening", port: l.info.port, id: l.info.id, reused: true }));
+          // An explicit grace on a later launch (--keep-alive, KNOWNS_UI_IDLE_MS) wins over the one
+          // the listener started with, so the message the user reads is the policy in force.
+          if (req.idleMs !== undefined) l.setIdleMs(uiIdleMs(req.idleMs));
+          sock.end(
+            frame({
+              type: "listening",
+              port: l.info.port,
+              id: l.info.id,
+              reused: true,
+              idleMs: l.idleMs(),
+            }),
+          );
           return;
         }
       }
@@ -411,6 +440,7 @@ export class UiHost {
     };
     let ended = false;
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    let setGrace: (ms: number) => void = () => {};
     const stop = (reason: string): void => {
       if (ended) return;
       ended = true;
@@ -422,24 +452,30 @@ export class UiHost {
       handle.stop();
       sock.end();
     };
+    let grace = uiIdleMs(req.idleMs);
+    let clients = 0;
     if (detached) {
       // The daemon owns the listener: it lives while a tab is connected and ends after the grace.
-      const grace = uiIdleMs(req.idleMs);
+      // A grace of 0 never arms the timer: the listener stays until it is stopped.
       const arm = (): void => {
         if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = undefined;
+        if (ended || grace === 0 || clients > 0) return;
         idleTimer = setTimeout(() => {
           this.log(`[ui-host] ${id} idle for ${grace} ms`);
           stop("idle");
         }, grace);
         idleTimer.unref?.();
       };
+      setGrace = (ms: number): void => {
+        grace = ms;
+        arm();
+      };
       arm();
       handle.onClients?.((n) => {
         if (ended) return;
-        if (n > 0) {
-          if (idleTimer) clearTimeout(idleTimer);
-          idleTimer = undefined;
-        } else arm();
+        clients = n;
+        arm();
       });
     }
     const poll = setInterval(() => {
@@ -448,7 +484,14 @@ export class UiHost {
         stop("owner_gone");
       }
     }, OWNER_CHECK_MS);
-    this.live.set(id, { info, key, stop, done: handle.done.catch(() => undefined) });
+    this.live.set(id, {
+      info,
+      key,
+      stop,
+      done: handle.done.catch(() => undefined),
+      idleMs: () => grace,
+      setIdleMs: (ms) => setGrace(ms),
+    });
     if (!detached) sock.on("close", () => stop("closed"));
     // A listener that stopped on its own (POST /api/shutdown) tells the launcher so; one that failed
     // to clean up must not take the shared daemon down with an unhandled rejection.
@@ -466,7 +509,7 @@ export class UiHost {
         this.log(`[ui-host] ${id} on port ${info.port} stopped`);
       });
     this.log(`[ui-host] ${id} listening on ${info.port}`);
-    if (detached) sock.end(frame({ type: "listening", port: handle.port, id }));
+    if (detached) sock.end(frame({ type: "listening", port: handle.port, id, idleMs: grace }));
     else sock.write(frame({ type: "listening", port: handle.port, id }));
   }
 

@@ -30,6 +30,8 @@ export interface OperationsState {
 	buffer: Buffered[];
 	/** Rows hidden in this tab only (a finished row that aged out). Cleared when the row runs again. */
 	hidden: Record<string, true>;
+	/** The project the server shows (from the snapshot), null until known. */
+	currentProjectRoot: string | null;
 }
 
 export const emptyOperations: OperationsState = {
@@ -40,6 +42,7 @@ export const emptyOperations: OperationsState = {
 	loading: false,
 	buffer: [],
 	hidden: {},
+	currentProjectRoot: null,
 };
 
 /** done and cancelled rows older than this are not shown at all (the stack's timer is for the fresh ones). */
@@ -96,7 +99,15 @@ export function applySnapshot(
 		byId[op.id] = op;
 		if (isStaleFinished(op, now)) hidden[op.id] = true;
 	}
-	let next: OperationsState = { ...state, seq: snapshot.seq, byId, hidden, ready: true, loading: false };
+	let next: OperationsState = {
+		...state,
+		seq: snapshot.seq,
+		byId,
+		hidden,
+		ready: true,
+		loading: false,
+		currentProjectRoot: snapshot.currentProjectRoot ?? null,
+	};
 	for (const e of state.buffer) next = applyBuffered(next, e);
 	return { ...next, buffer: [] };
 }
@@ -169,4 +180,15 @@ export function visibleOperations(state: OperationsState): Operation[] {
 	return Object.values(state.byId)
 		.filter((op) => !(op.id in state.hidden))
 		.sort((a, b) => b.startedAt - a.startedAt || (a.id < b.id ? 1 : -1));
+}
+
+const sameRoot = (a: string, b: string): boolean => a.replace(/[\\/]+$/, "") === b.replace(/[\\/]+$/, "");
+
+/**
+ * The tray shows the project being viewed by default. A web operation is always this server's own;
+ * a daemon row belongs to the project it names. Until the project is known nothing is hidden.
+ */
+export function inProject(op: Operation, currentProjectRoot: string | null): boolean {
+	if (op.source === "web" || !op.projectRoot || !currentProjectRoot) return true;
+	return sameRoot(op.projectRoot, currentProjectRoot);
 }

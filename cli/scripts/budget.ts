@@ -15,6 +15,17 @@ const MAX_DELTA = 30 * 1024 * 1024;
 // runner measured 225ms. 400ms is about 1.8x that floor: it still fails a real regression (a
 // startup that loads the engine eagerly adds hundreds of ms) without flaking on runner noise.
 const MAX_MS = process.platform === "win32" ? 400 : 150;
+// On a shared runner the wall clock swings with whatever else the host is doing: medians of 86-169ms
+// were seen for the same tree on GitHub macOS and Ubuntu runners, so a wall-clock limit alone fails
+// builds that did not change. CPU time (user + system) of the same process hardly moves with host
+// load (here 170-195ms idle and loaded, where wall went 173-266ms), and an empty Bun binary run
+// interleaved with knowns takes out the cost of the runtime itself. A run passes when the wall
+// median is within MAX_MS, or the CPU time above an empty binary is within MAX_CPU_DELTA_MS: a quiet
+// runner passes on wall exactly as before, a noisy one is judged on work done. A startup that loads
+// the engine eagerly adds hundreds of ms of CPU and fails both. Windows keeps wall only: its
+// process accounting counts in 15.6ms ticks and includes the runtime's own threads.
+const MAX_CPU_DELTA_MS = 200;
+const CPU_VERDICT = process.platform !== "win32";
 const RUNS = 11;
 
 const cliDir = resolve(import.meta.dir, "..");
@@ -65,6 +76,20 @@ if (args.length > 0) {
   // rounds counts; locally one round. Every round is printed.
   const maxRounds = process.env.CI === "1" || process.env.CI === "true" ? 3 : 1;
   const medians: number[] = [];
+  const emptyExe = join(
+    baselineDir,
+    `${Bun.version}-bun-${platform}`,
+    process.platform === "win32" ? "knowns.exe" : "knowns",
+  );
+  const useCpu = CPU_VERDICT && existsSync(emptyExe);
+  const cpuOf = (p: { resourceUsage?: { cpuTime: { user: unknown; system: unknown } } }) =>
+    p.resourceUsage
+      ? (Number(p.resourceUsage.cpuTime.user) + Number(p.resourceUsage.cpuTime.system)) / 1000
+      : Number.NaN;
+  const cpuKnowns: number[] = [];
+  const cpuEmpty: number[] = [];
+  const median = (xs: number[]) =>
+    [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] ?? Number.POSITIVE_INFINITY;
   for (let round = 0; round < maxRounds; round++) {
     const times: number[] = [];
     for (let i = 0; i < RUNS; i++) {
@@ -76,19 +101,37 @@ if (args.length > 0) {
         failed = true;
         break;
       }
+      if (useCpu) {
+        // The empty binary right after, so both see the same host load.
+        cpuKnowns.push(cpuOf(p));
+        cpuEmpty.push(
+          cpuOf(Bun.spawnSync([emptyExe, "--version"], { stdout: "pipe", stderr: "pipe" })),
+        );
+      }
     }
     if (times.length < RUNS) break;
     times.sort((a, b) => a - b);
-    const median = times[Math.floor(RUNS / 2)] ?? Number.POSITIVE_INFINITY;
-    medians.push(median);
-    console.log(`     round ${round + 1}: median ${median.toFixed(1)}ms over ${RUNS} runs`);
-    if (median <= MAX_MS) break;
+    const med = times[Math.floor(RUNS / 2)] ?? Number.POSITIVE_INFINITY;
+    medians.push(med);
+    console.log(`     round ${round + 1}: median ${med.toFixed(1)}ms over ${RUNS} runs`);
+    if (med <= MAX_MS) break;
+  }
+  const cpuDelta =
+    useCpu && cpuKnowns.every(Number.isFinite) && cpuEmpty.every(Number.isFinite)
+      ? median(cpuKnowns) - median(cpuEmpty)
+      : Number.NaN;
+  if (useCpu) {
+    console.log(
+      `     cpu: knowns ${median(cpuKnowns).toFixed(1)}ms, empty ${median(cpuEmpty).toFixed(1)}ms, delta ${cpuDelta.toFixed(1)}ms over ${cpuKnowns.length} runs (limit ${MAX_CPU_DELTA_MS}ms)`,
+    );
   }
   if (medians.length) {
     const best = Math.min(...medians);
-    const ok = best <= MAX_MS;
+    const wallOk = best <= MAX_MS;
+    const cpuOk = Number.isFinite(cpuDelta) && cpuDelta <= MAX_CPU_DELTA_MS;
+    const ok = wallOk || cpuOk;
     console.log(
-      `${ok ? "ok  " : "FAIL"} startup best median ${best.toFixed(1)}ms of ${medians.length} round(s) (limit ${MAX_MS}ms)`,
+      `${ok ? "ok  " : "FAIL"} startup best median ${best.toFixed(1)}ms of ${medians.length} round(s) (limit ${MAX_MS}ms)${!wallOk && cpuOk ? `, passes on cpu delta ${cpuDelta.toFixed(1)}ms (limit ${MAX_CPU_DELTA_MS}ms)` : ""}`,
     );
     if (!ok) failed = true;
   }

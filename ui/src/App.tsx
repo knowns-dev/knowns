@@ -5,6 +5,7 @@ import { UserProvider } from "./contexts/UserContext";
 import { UIPreferencesProvider } from "./contexts/UIPreferencesContext";
 import { SSEProvider } from "./contexts/SSEContext";
 import { OperationsProvider } from "./contexts/OperationsContext";
+import { ServerUpdateNotice } from "./components/organisms/ServerUpdateNotice";
 import { TimeTrackerProvider } from "./contexts/TimeTrackerContext";
 import { GlobalTaskProvider } from "./contexts/GlobalTaskContext";
 import { AuthProvider } from "./contexts/AuthContext";
@@ -45,6 +46,7 @@ export default function App() {
 									<TimeTrackerProvider>
 										<GlobalTaskProvider>
 											<RouterProvider router={router} />
+											<ServerUpdateNotice />
 											{import.meta.env.DEV && <Agentation />}
 										</GlobalTaskProvider>
 									</TimeTrackerProvider>

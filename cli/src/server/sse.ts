@@ -1,5 +1,6 @@
 // internal/server/sse.go: a broker that fans named SSE events out to every subscriber. A full
 // client queue (64 events) drops the event instead of blocking the sender.
+import { VERSION } from "../version.ts";
 import { goEncode } from "./gojson.ts";
 
 export interface SSEEvent {
@@ -65,7 +66,9 @@ export class SSEBroker implements Broadcaster {
         };
         client = c;
         this.add(c);
-        c.push(`event: connected\ndata: {"timestamp":${Date.now()}}\n\n`);
+        c.push(
+          `event: connected\ndata: {"timestamp":${Date.now()},"version":${JSON.stringify(VERSION)}}\n\n`,
+        );
         signal?.addEventListener("abort", () => this.remove(c));
       },
       cancel: () => {

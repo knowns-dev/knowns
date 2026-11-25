@@ -65,6 +65,10 @@ interface OperationsContextType {
 	/** Web operations come back under a new id; daemon jobs keep theirs. */
 	retry: (id: string) => Promise<void>;
 	dismiss: (id: string) => Promise<void>;
+	/** Dismiss every finished row (of one project when given) on the server. */
+	dismissFinished: (projectRoot?: string | null) => Promise<void>;
+	/** The project the server shows now; null until the first snapshot. */
+	currentProjectRoot: string | null;
 }
 
 const OperationsContext = createContext<OperationsContextType | undefined>(undefined);
@@ -127,9 +131,15 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
 		dispatch({ type: "forget", id });
 	}, []);
 
+	const dismissFinished = useCallback(async (projectRoot?: string | null) => {
+		const ids = await operationsApi.dismissFinished(projectRoot);
+		for (const id of ids) dispatch({ type: "forget", id });
+	}, []);
+
+	const currentProjectRoot = state.currentProjectRoot;
 	const value = useMemo(
-		() => ({ operations, hideHere, cancel, retry, dismiss }),
-		[operations, hideHere, cancel, retry, dismiss],
+		() => ({ operations, hideHere, cancel, retry, dismiss, dismissFinished, currentProjectRoot }),
+		[operations, hideHere, cancel, retry, dismiss, dismissFinished, currentProjectRoot],
 	);
 	return <OperationsContext.Provider value={value}>{children}</OperationsContext.Provider>;
 }
