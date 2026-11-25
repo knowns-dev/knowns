@@ -29,6 +29,7 @@ import {
 } from "../../src/runtime/daemon-registry.ts";
 import { readDescriptor } from "../../src/runtime/mcp-endpoint.ts";
 import { type Lease, queuePath, scanQueues } from "../../src/runtime/queue.ts";
+import { spawnLivePid } from "../helpers/live-pid.ts";
 import { makeSandbox } from "../mcp/harness.ts";
 
 const CLI_ROOT = join(import.meta.dir, "..", "..");
@@ -56,9 +57,12 @@ describe("registry and runner election", () => {
     if (savedRoot === undefined) delete process.env.KNOWNS_RUNTIME_ROOT;
     else process.env.KNOWNS_RUNTIME_ROOT = savedRoot;
   });
-  // Two live pids that are not this test's job to kill: this process and its parent.
+  // Two live pids: this process and a child of its own that idles (never the parent, which in a
+  // full single-process run is not a reliable "other daemon").
   const ME = process.pid;
-  const OTHER = process.ppid;
+  const other = spawnLivePid();
+  const OTHER = other.pid;
+  afterAll(() => other.kill());
 
   test("a daemon is found by version while its process lives, and unregistered cleanly", () => {
     registerDaemon("1.0.0");

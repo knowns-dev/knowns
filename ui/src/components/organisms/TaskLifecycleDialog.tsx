@@ -25,6 +25,11 @@ interface TaskLifecycleDialogProps {
 	allowCancelWhileLoading?: boolean;
 }
 
+/** The tasks of a preview that can be changed now: what a confirm sends and nothing else. */
+export function eligibleTaskIds(response: TaskLifecycleResponse | null | undefined): string[] {
+	return (response?.items ?? []).filter((item) => item.eligible && item.reasons.length === 0).map((item) => item.taskId);
+}
+
 function ResultRow({ item, execute }: { item: TaskLifecycleResult; execute: boolean }) {
 	const repairPending = item.reasons.some((reason) => reason.code === "operation_failed")
 		|| item.warnings?.some((warning) => warning.code === "event_delivery_failed") === true;
@@ -108,7 +113,8 @@ export function TaskLifecycleDialog({
 	onConfirm,
 	allowCancelWhileLoading = false,
 }: TaskLifecycleDialogProps) {
-	const eligible = response?.items.filter((item) => item.eligible && item.reasons.length === 0).length ?? 0;
+	const eligible = eligibleTaskIds(response).length;
+	const nothingToDo = !!response && !response.execute && response.items.length > 0 && eligible === 0;
 	const canExecute = !!response && !response.execute && eligible > 0;
 	const repairPending = !!response?.failedTaskId
 		|| response?.items.some((item) => item.reasons.some((reason) => reason.code === "operation_failed")) === true;
@@ -129,6 +135,12 @@ export function TaskLifecycleDialog({
 					{error && (
 						<div role="alert" className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
 							{error}
+						</div>
+					)}
+
+					{nothingToDo && (
+						<div role="status" className="mb-4 rounded-md border bg-muted/40 p-3 text-sm" data-testid="lifecycle-nothing">
+							Nothing to do: none of these Tasks can be changed right now. The reasons are listed below.
 						</div>
 					)}
 

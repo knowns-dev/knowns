@@ -15,7 +15,7 @@ import { Menu } from "@/ui/components/ui/knowns/menu";
 import { api, LifecycleAPIError, type TaskFilters } from "../api/client";
 import { useTaskCounts } from "../hooks/useTaskCounts";
 import type { TaskLifecycleResponse } from "../models/taskLifecycle";
-import { TaskLifecycleDialog } from "../components/organisms/TaskLifecycleDialog";
+import { TaskLifecycleDialog, eligibleTaskIds } from "../components/organisms/TaskLifecycleDialog";
 import { toast } from "../components/ui/sonner";
 import {
 	PageContent,
@@ -233,23 +233,24 @@ export default function TasksPage({
 		try {
 			const response = await api.batchArchiveTasks({ minimumAgeMs, ids: selectedIds ? [...selectedIds] : undefined });
 			if (archiveGenerationRef.current !== generation) return;
-			setArchiveRequest({ generation, minimumAgeMs, label, ids: Object.freeze(response.items.map((item) => item.taskId)) });
+			setArchiveRequest({ generation, minimumAgeMs, label, ids: Object.freeze(eligibleTaskIds(response)) });
 			setArchiveResponse(response);
 		} catch (error) {
 			if (archiveGenerationRef.current !== generation) return;
 			const response = error instanceof LifecycleAPIError ? error.response || null : null;
 			if (response) {
-				setArchiveRequest({ generation, minimumAgeMs, label, ids: Object.freeze(response.items.map((item) => item.taskId)) });
+				setArchiveRequest({ generation, minimumAgeMs, label, ids: Object.freeze(eligibleTaskIds(response)) });
 			}
 			setArchiveResponse(response);
-			setArchiveError(error instanceof Error ? error.message : "Failed to preview archive");
+			// A preview in which nothing can be archived is an answer, not a failure: the dialog says so.
+			setArchiveError(response && response.items.length > 0 && eligibleTaskIds(response).length === 0 ? null : error instanceof Error ? error.message : "Failed to preview archive");
 		} finally {
 			if (archiveGenerationRef.current === generation) setArchiveLoading(false);
 		}
 	};
 
 	const handleBatchArchiveExecute = async () => {
-		if (!archiveRequest?.ids || archiveInFlightRef.current) return;
+		if (!archiveRequest?.ids || archiveRequest.ids.length === 0 || archiveInFlightRef.current) return;
 		const { generation, minimumAgeMs, ids } = archiveRequest;
 		archiveInFlightRef.current = true;
 		setArchiveLoading(true);

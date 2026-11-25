@@ -38,10 +38,10 @@ async function collect(side: Side, mutate: () => Promise<void>): Promise<string[
       while (idx >= 0) {
         // generated memory ids are random in Go too
         events.push(
-          mask(buf.slice(0, idx), side).replace(
-            /"memory":\{"id":"[a-z0-9]{6}"/,
-            '"memory":{"id":"<MID>"',
-          ),
+          mask(buf.slice(0, idx), side)
+            .replace(/"memory":\{"id":"[a-z0-9]{6}"/, '"memory":{"id":"<MID>"')
+            // TS adds the server version to the connected event (KN-ZV8WGG); Go has none.
+            .replace(/^(event: connected\ndata: \{"timestamp":<MS>),"version":"[^"]*"/, "$1"),
         );
         buf = buf.slice(idx + 2);
         idx = buf.indexOf("\n\n");

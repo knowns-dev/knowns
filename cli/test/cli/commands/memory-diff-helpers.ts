@@ -129,7 +129,8 @@ export function sortMetadataBlock(text: string): string {
 }
 
 const TS_RE = /\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)/g;
-const DID_RE = /\b(\d{8})-\d{4}-/g;
+// No \b: a styled id follows an ANSI code ending in "m", so a word boundary never matches there.
+const DID_RE = /(?<!\d)(\d{8})-\d{4}-/g;
 
 /** Today's date as yyyymmdd, local and UTC: the only ids whose minute prefix the wall clock chose. */
 const TODAY = (() => {

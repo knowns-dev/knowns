@@ -41,7 +41,7 @@ export type SSEEventType =
 
 // Event payload types
 export interface SSEEventPayloads {
-	connected: { timestamp: number };
+	connected: { timestamp: number; /** Newer servers name their version here. */ version?: string };
 	"tasks:updated": { task: Task };
 	"tasks:refresh": Record<string, never>;
 	"tasks:archived": { task: Task };
